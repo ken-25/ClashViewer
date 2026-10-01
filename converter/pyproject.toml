@@ -1,0 +1,25 @@
+[project]
+name = "clash-converter"
+version = "0.1.0"
+description = "干渉ビューアの変換エンジン（E57 → LAS → Potree 2.0）"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "laspy==2.7.0",
+    "numpy==2.5.3",
+    "pye57==0.4.19",
+]
+
+[project.scripts]
+clash-converter = "clash_converter.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ifcopenshell==0.9.0",
+    "pyinstaller==6.22.3",
+    "pytest==9.1.1",
+]
