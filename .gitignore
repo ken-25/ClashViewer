@@ -1,0 +1,57 @@
+# ===== .NET / C# (ビューア exe) =====
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.dll
+*.exe
+*.pdb
+
+# ===== Python (変換エンジン) =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# PyInstaller / Nuitka のビルド成果物
+build/
+dist/
+*.spec.bak
+
+# ===== Node / JS (viewer) =====
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json.bak
+
+# ===== 変換データ・共有フォルダ由来 =====
+# 点群・モデルの変換結果や取込データはリポジトリに含めない
+datasets/
+issues/
+events/
+sample/
+*.e57
+*.ifc
+*.las
+*.laz
+*.frag
+
+# 同梱バイナリ（PotreeConverter 等）。scripts/fetch-third-party.ps1 で取得する
+third_party/
+tools/PotreeConverter*
+tools/converter.exe
+
+# viewer のビルド時に node_modules から写す同梱物（scripts/copy-assets.mjs）
+viewer/public/wasm/
+viewer/public/fragments/
+
+# ===== OS / エディタ =====
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+*.log
