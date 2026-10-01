@@ -167,6 +167,12 @@ export class App {
       this.clipping.box.copy(extent);
       this.frame.restore(JSON.parse(localStorage.getItem(`frame:${m.site}`) ?? "null"), origin);
       this.viewer.fit(extent);
+      const gap = this.modelGap();
+      this.setHint(
+        gap !== null
+          ? `モデルが点群から約 ${gap >= 1000 ? `${(gap / 1000).toFixed(1)} km` : `${gap.toFixed(0)} m`} 離れています（座標が合っていません）。「3点合わせ」で合わせてください`
+          : "",
+      );
       this.diff = null;
       if (m.diff) {
         try {
@@ -201,12 +207,30 @@ export class App {
     this.viewer.requestRender();
   }
 
+  /**
+   * 視点合わせ・切断の基準にする範囲。
+   * 座標合わせ前で点群とモデルが遠く離れている（km 単位）と、両方を入れると点にしか見えないので、
+   * そのときは点群（現場）の範囲だけを使う。
+   */
   sceneBox(): THREE.Box3 {
     const b = new THREE.Box3();
-    if (this.pc && this.pc.group.visible) b.union(this.pc.boxDisplay);
-    b.union(this.models.box());
+    const pcBox = this.pc && this.pc.group.visible ? this.pc.boxDisplay : null;
+    const modelBox = this.models.box();
+    if (pcBox && !modelBox.isEmpty() && this.modelGap(pcBox, modelBox) !== null) b.copy(pcBox);
+    else {
+      if (pcBox) b.union(pcBox);
+      b.union(modelBox);
+    }
     if (b.isEmpty()) b.set(new THREE.Vector3(-10, -10, -2), new THREE.Vector3(10, 10, 10));
     return b;
+  }
+
+  /** 点群とモデルが「明らかに合っていない」ほど離れていれば、その距離（m）。近ければ null */
+  modelGap(pcBox = this.pc?.boxDisplay, modelBox = this.models.box()): number | null {
+    if (!pcBox || pcBox.isEmpty() || modelBox.isEmpty()) return null;
+    const gap = pcBox.distanceToPoint(modelBox.getCenter(new THREE.Vector3()));
+    const size = Math.max(pcBox.getSize(new THREE.Vector3()).length(), modelBox.getSize(new THREE.Vector3()).length());
+    return gap > Math.max(200, size * 2) ? gap : null;
   }
 
   /** 座標合わせを適用し直す（3点合わせのプレビュー・保存後） */
@@ -441,7 +465,7 @@ export class App {
     this.viewer.controls.target.copy(worldToScene(m, v.camera.target));
     this.viewer.camera.fov = v.camera.fov || this.viewer.camera.fov;
     this.viewer.camera.updateProjectionMatrix();
-    this.viewer.controls.update();
+    this.viewer.cameraMoved();
     this.clipping.restore(v.clip, m.origin);
     if (v.visibility?.pointcloud && this.pc) {
       this.pc.group.visible = v.visibility.pointcloud.visible;
