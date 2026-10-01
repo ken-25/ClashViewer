@@ -6,6 +6,7 @@ import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
 import { host, isHosted } from "./host";
 import type { ClipMode } from "./tools/clipping";
+import type { ViewKind } from "./scene/viewer3d";
 import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
 import { $, showMessage } from "./ui/dom";
@@ -36,7 +37,13 @@ async function main() {
   app.on("diff", () => renderDiff(app));
   app.on("selection", () => renderProps(app));
   app.on("measures", () => renderMeasures(app));
-  app.on("clip", () => renderToolPanel(app));
+  // 切断の状態はボタン以外（指摘の視点再現・データセットを開き直す）でも変わるので、ボタンの表示を毎回合わせる
+  const syncClipButtons = () =>
+    document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => x.classList.toggle("active", x.dataset.clip === app.clipping.mode));
+  app.on("clip", () => {
+    renderToolPanel(app);
+    syncClipButtons();
+  });
   app.on("align", () => renderToolPanel(app));
   app.on("tool", () => {
     renderToolPanel(app);
@@ -60,11 +67,10 @@ async function main() {
         app.clipping.section.position = app.clipping.section.axis === "z" ? c.z : c[app.clipping.section.axis];
       }
       app.clipping.setMode(mode);
-      document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => x.classList.toggle("active", x === b));
     }),
   );
   document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) =>
-    b.addEventListener("click", () => app.viewer.setView(b.dataset.view as any, app.sceneBox())),
+    b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.sceneBox())),
   );
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -93,7 +99,7 @@ async function main() {
     const offset = app.viewer.camera.position.clone().sub(app.viewer.controls.target);
     app.viewer.controls.target.copy(p.point);
     app.viewer.camera.position.copy(p.point).add(offset.multiplyScalar(0.6));
-    app.viewer.controls.update();
+    app.viewer.cameraMoved();
   });
   window.addEventListener("keydown", (e) => {
     if ((e.target as HTMLElement)?.closest("input,textarea,select")) return;

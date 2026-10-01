@@ -216,7 +216,7 @@ export function renderToolPanel(app: App) {
       h("div", { class: "small muted", id: "section-label" }),
       h("div", { class: "row" },
         h("button", { disabled: !app.lastPick, onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderToolPanel(app); } } }, "選択位置に合わせる"),
-        h("button", { onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "side" : "front", app.sceneBox()) }, "断面に正対"),
+        h("button", { onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.sceneBox()) }, "断面に正対"),
       ),
     );
     updateSectionLabel(app);
