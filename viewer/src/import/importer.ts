@@ -146,8 +146,15 @@ export class ImportJob {
       t.status = "running";
       t.message = "原点と座標合わせを決めています";
       this.emit();
+      // 取込の間に他の人（や自分）が同じ現場の版を足したり、座標合わせを保存したりしていることがある。
+      // 確認画面を出した時点の情報ではなく、公開直前の一覧から版番号と座標合わせを決める（同じ版番号が 2 つできないように）
+      const fresh = plan.base ? ((await host.listDatasets()) as Manifest[]).filter((d) => d.site === plan.base!.site) : [];
+      const freshBase = fresh.find((d) => d.folder === plan.base?.folder) ?? plan.base;
+      const maxVersion = Math.max(plan.base?.version ?? 0, ...fresh.map((d) => d.version));
+      if (plan.base && maxVersion > plan.base.version)
+        this.log.push({ level: "warn", message: `取込中に第${maxVersion}版が追加されていたため、第${maxVersion + 1}版として登録しました（差分は第${plan.base.version}版との比較です）` });
       const origin = plan.base?.origin ?? computeOrigin(pointcloud, models);
-      const alignment = plan.base?.alignment ?? autoAlignment(pointcloud, models, this.log);
+      const alignment = freshBase?.alignment ?? autoAlignment(pointcloud, models, this.log);
       let diffSummary: Manifest["diff"] = null;
       const draft: Manifest = {
         schema: 1,
@@ -155,7 +162,7 @@ export class ImportJob {
         folder: begin.folder,
         name: plan.name,
         site: plan.base?.site ?? begin.id,
-        version: (plan.base?.version ?? 0) + 1,
+        version: maxVersion + 1,
         previous: plan.base?.folder ?? null,
         state: "importing",
         createdBy: "",
