@@ -249,6 +249,9 @@ h3 {
   padding: 4px 12px;
   border-radius: 14px;
   pointer-events: none;
+  /* 3D 画面（canvas）より手前に出す */
+  z-index: 1;
+  max-width: 80%;
 }
 .hint:empty {
   display: none;

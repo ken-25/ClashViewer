@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
+export type ViewKind = "iso" | "top" | "front" | "back" | "right" | "left";
+
 /**
  * three.js の土台。点群とモデルを同じシーン・同じ深度バッファで描く。
  * 座標は Z 上・メートル。シーン座標＝世界座標 − データセットの原点オフセット（float32 の精度を保つため）。
@@ -153,16 +155,32 @@ export class Viewer3D {
     this.controls.target.copy(center);
     this.camera.position.copy(center).addScaledVector(dir, dist * 0.9);
     this.camera.updateProjectionMatrix();
+    this.cameraMoved();
+  }
+
+  /**
+   * プログラムからカメラを動かした後に呼ぶ。マウス操作の終了と同じ "end" を出して、
+   * モデル（Fragments）の LOD・カリングを新しい視点で強制更新させる。
+   * これが無いと、開いた直後や視点ボタンの後に古い視点のまま表示が欠ける。
+   */
+  cameraMoved() {
     this.controls.update();
+    this.controls.dispatchEvent({ type: "end" });
     this.requestRender();
   }
 
-  setView(kind: "top" | "front" | "side" | "iso", box: THREE.Box3) {
-    const dirs = {
+  /**
+   * 視点ボタン。「前・右」は既定の斜め視点（全体）から見たときの向き。
+   * 全体はカメラが +X・−Y 側にあるので、見えている手前の面が −Y 側（前）、右の面が +X 側（右）。
+   */
+  setView(kind: ViewKind, box: THREE.Box3) {
+    const dirs: Record<ViewKind, THREE.Vector3> = {
+      iso: new THREE.Vector3(1, -1, 0.8),
       top: new THREE.Vector3(0, -0.0001, 1),
       front: new THREE.Vector3(0, -1, 0.0001),
-      side: new THREE.Vector3(1, 0, 0.0001),
-      iso: new THREE.Vector3(1, -1, 0.8),
+      back: new THREE.Vector3(0, 1, 0.0001),
+      right: new THREE.Vector3(1, 0, 0.0001),
+      left: new THREE.Vector3(-1, 0, 0.0001),
     };
     this.fit(box, dirs[kind]);
   }
