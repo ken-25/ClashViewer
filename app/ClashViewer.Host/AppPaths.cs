@@ -1,11 +1,18 @@
 namespace ClashViewer.Host;
 
-/// <summary>共有フォルダとローカル作業領域のパス。</summary>
+/// <summary>
+/// アプリ一式・共有フォルダ・ローカル作業領域のパス。
+/// 配布時は App と Root は同じ（共有フォルダに exe を置く）。開発時は --root でデータだけ別フォルダに向けられる。
+/// </summary>
 public sealed class AppPaths
 {
+    /// <summary>アプリ一式（exe・viewer/・tools/）の場所。exe を置いたフォルダ。</summary>
+    public string App { get; }
+    public string Viewer => Path.Combine(App, "viewer");
+    public string Tools => Path.Combine(App, "tools");
+
+    /// <summary>共有データ（config/・datasets/・events/・issues/）のルート。</summary>
     public string Root { get; }
-    public string Viewer => Path.Combine(Root, "viewer");
-    public string Tools => Path.Combine(Root, "tools");
     public string Config => Path.Combine(Root, "config");
     public string Members => Path.Combine(Config, "members");
     public string Datasets => Path.Combine(Root, "datasets");
@@ -19,8 +26,9 @@ public sealed class AppPaths
     public string Work => Path.Combine(Local, "work");
     public string Logs => Path.Combine(Local, "logs");
 
-    public AppPaths(string root)
+    public AppPaths(string app, string root)
     {
+        App = Path.GetFullPath(app).TrimEnd(Path.DirectorySeparatorChar);
         Root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
         Local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClashViewer");
     }

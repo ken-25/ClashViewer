@@ -4,7 +4,8 @@ internal static class Program
 {
     /// <summary>
     /// 引数（通常は不要。exe を置いたフォルダが共有フォルダのルートになる）
-    ///   --root &lt;dir&gt;        共有フォルダのルートを指定する
+    ///   --root &lt;dir&gt;        共有データ（config/・datasets/・events/・issues/）のルートを指定する。
+    ///                       viewer/・tools/ は常に exe の隣を使う
     ///   --dev               開発モード（開発者ツール、テスト用の操作を有効にする）
     ///   --debug-port &lt;n&gt;    WebView2 のリモートデバッグ（E2E テスト用）
     /// </summary>
@@ -35,9 +36,9 @@ internal static class Program
             }
         }
 
-        var paths = new AppPaths(root);
+        var paths = new AppPaths(AppContext.BaseDirectory, root);
         Log.Init(paths.Logs);
-        Log.Info($"起動 root={paths.Root} dev={dev} user={Environment.UserName}");
+        Log.Info($"起動 app={paths.App} root={paths.Root} dev={dev} user={Environment.UserName}");
         ApplicationConfiguration.Initialize();
         if (!Directory.Exists(paths.Viewer))
         {

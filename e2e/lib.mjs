@@ -1,16 +1,24 @@
 // E2E 用: 干渉ビューア.exe を開発モード＋リモートデバッグで起動し、Playwright で WebView2 に繋ぐ
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 export const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-export const share = process.env.CV_SHARE ?? join(repo, "dist", "share");
+// アプリ一式（scripts/build.ps1 の出力）。データは置かない
+export const dist = join(repo, "dist");
+// 開発・テスト用の共有データ（config/・datasets/・events/・issues/）。CV_SHARE で別の場所にも向けられる
+export const share = process.env.CV_SHARE ?? join(repo, "dev", "share");
+// E2E のスクリーンショットの保存先
+export const shots = join(repo, "dev", "screenshots");
+mkdirSync(share, { recursive: true });
+mkdirSync(shots, { recursive: true });
 
 // 起動ごとに別のポートを使う（前のインスタンスの WebView2 が残っていると、そちらへ繋がってしまう）
 export async function launch({ port = 9400 + Math.floor(Math.random() * 500), root = share, user } = {}) {
-  const exe = join(share, "干渉ビューア.exe");
+  const exe = join(dist, "干渉ビューア.exe");
   const args = ["--root", root, "--dev", "--debug-port", String(port)];
   if (user) args.push("--user", user); // 開発モードのみ有効
   const proc = spawn(exe, args, { stdio: "ignore" });

@@ -1,7 +1,7 @@
 // 取込の E2E: ファイルを登録 → 取込画面で「取り込む」→ 完了まで待ち、表示と計測値を記録する
 //   node import.mjs <名称> <ファイル...> [--version]（--version なら表示中の現場の新しい版として取り込む）
 import { join, resolve } from "node:path";
-import { launch, assert, share } from "./lib.mjs";
+import { launch, assert, share, shots } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const asVersion = args.includes("--version");
@@ -78,7 +78,7 @@ try {
     };
   });
   console.log(JSON.stringify(stats, null, 1));
-  await page.screenshot({ path: join(share, "..", `e2e-import-${name}.png`) });
+  await page.screenshot({ path: join(shots, `e2e-import-${name}.png`) });
 } finally {
   await app.close();
 }

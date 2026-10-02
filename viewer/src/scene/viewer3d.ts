@@ -43,10 +43,13 @@ export class Viewer3D {
     this.camera.position.set(30, -30, 25);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = false;
-    this.controls.zoomToCursor = true;
+    // ホイールは自前で処理する（カーソル下の物体までの距離に比例して寄る）。OrbitControls の
+    // ズームは注視点までの距離で拡縮するため、注視点に近づくと寄れなくなる
+    this.controls.enableZoom = false;
     this.controls.screenSpacePanning = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     this.controls.addEventListener("change", () => this.requestRender());
+    this.renderer.domElement.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.2));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -137,6 +140,113 @@ export class Viewer3D {
       this.frames = 0;
       this.fpsTime = now;
     }
+  }
+
+  // ---- ホイールでの拡大縮小 ----
+
+  /**
+   * カーソル下の物体の位置（シーン座標）を返す。ホイールで寄る先に使う。
+   * 未設定または何も無いときは、注視点と同じ奥行きの位置へ寄る。
+   */
+  zoomPick: ((clientX: number, clientY: number) => Promise<THREE.Vector3 | null>) | null = null;
+  /** ホイール 1 目盛りで、寄る先までの距離に掛ける比率（0.8 = 2 割寄る） */
+  zoomRatio = 0.8;
+
+  /** 寄る先のキャッシュ。カーソルとカメラが動かない間は同じ点へ寄り続ける */
+  private zoomPivot: { point: THREE.Vector3; x: number; y: number; time: number; camPos: THREE.Vector3; camQuat: THREE.Quaternion } | null = null;
+  private zoomSteps = 0;
+  private zoomCursor = { x: 0, y: 0 };
+  private zoomBusy = false;
+
+  private onWheel(e: WheelEvent) {
+    if (!this.controls.enabled) return;
+    e.preventDefault();
+    // 1 目盛りを 1 に揃える（ピクセル単位は 100、行単位は 3 が 1 目盛り）。タッチパッドは小数になる
+    const unit = e.deltaMode === 0 ? 100 : e.deltaMode === 1 ? 3 : 1;
+    const steps = THREE.MathUtils.clamp(e.deltaY / unit, -5, 5);
+    if (steps === 0) return;
+    this.zoomSteps += steps;
+    this.zoomCursor = { x: e.clientX, y: e.clientY };
+    void this.flushZoom();
+  }
+
+  /** 溜まったホイール量を処理する。カーソル下の取得（非同期）を待つ間の回転は合算する */
+  private async flushZoom() {
+    if (this.zoomBusy) return;
+    this.zoomBusy = true;
+    try {
+      while (this.zoomSteps !== 0) {
+        const { x, y } = this.zoomCursor;
+        let pivot = this.validZoomPivot(x, y);
+        if (!pivot) {
+          const hit = this.zoomPick ? await this.zoomPick(x, y).catch(() => null) : null;
+          pivot = {
+            point: hit ?? this.fallbackZoomPoint(x, y),
+            x,
+            y,
+            time: 0,
+            camPos: new THREE.Vector3(),
+            camQuat: new THREE.Quaternion(),
+          };
+          this.zoomPivot = pivot;
+        }
+        const steps = this.zoomSteps;
+        this.zoomSteps = 0;
+        this.dollyToward(pivot.point, steps);
+        pivot.time = performance.now();
+        pivot.camPos.copy(this.camera.position);
+        pivot.camQuat.copy(this.camera.quaternion);
+      }
+    } finally {
+      this.zoomBusy = false;
+    }
+  }
+
+  /**
+   * キャッシュした寄る先がまだ使えるか。カメラを寄る先へ向けて真っ直ぐ動かすので、
+   * カーソルが動かなければ寄る先は同じ画素に留まる。回転・移動・表示の変化に備えて、
+   * カメラが他の操作で動いたときと少し間が空いたときは取り直す。
+   */
+  private validZoomPivot(x: number, y: number) {
+    const p = this.zoomPivot;
+    if (!p) return null;
+    if (Math.abs(p.x - x) > 2 || Math.abs(p.y - y) > 2) return null;
+    if (performance.now() - p.time > 800) return null;
+    const dist = this.camera.position.distanceTo(p.point);
+    if (this.camera.position.distanceTo(p.camPos) > dist * 1e-6 + 1e-9) return null;
+    if (Math.abs(this.camera.quaternion.dot(p.camQuat)) < 1 - 1e-9) return null;
+    return p;
+  }
+
+  /** カーソル下に何も無いとき: カーソル方向の線上で、注視点と同じ奥行きの位置 */
+  private fallbackZoomPoint(clientX: number, clientY: number): THREE.Vector3 {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(this.toNdc(clientX, clientY), this.camera);
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    const depth = Math.max(this.controls.target.clone().sub(this.camera.position).dot(fwd), 0.5);
+    const cos = Math.max(ray.ray.direction.dot(fwd), 1e-3);
+    return ray.ray.origin.clone().addScaledVector(ray.ray.direction, depth / cos);
+  }
+
+  /**
+   * 寄る先（point）へ向けてカメラを真っ直ぐ動かす。距離は 1 目盛りごとに zoomRatio 倍
+   * （遠い物体ほど大きく、近い物体ほど小さく動く）。向きは変えない。
+   * 注視点は視線上の寄る先と同じ奥行きへ置き直す（回転の中心と近クリップ面を物体に合わせる）。
+   */
+  private dollyToward(point: THREE.Vector3, steps: number) {
+    const cam = this.camera.position;
+    const toPoint = point.clone().sub(cam);
+    const dist = toPoint.length();
+    if (dist < 1e-9) return;
+    const next = THREE.MathUtils.clamp(dist * Math.pow(this.zoomRatio, steps), 0.02, 20000);
+    cam.addScaledVector(toPoint.divideScalar(dist), dist - next);
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    const depth = Math.max(point.clone().sub(cam).dot(fwd), 0.02);
+    this.controls.target.copy(cam).addScaledVector(fwd, depth);
+    this.controls.update();
+    // マウス操作の終了と同じく "end" を出して、モデルの LOD・カリングを更新させる
+    this.controls.dispatchEvent({ type: "end" });
+    this.requestRender();
   }
 
   /** 画面上の位置（client 座標）を NDC へ */
