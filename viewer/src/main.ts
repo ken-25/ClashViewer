@@ -11,7 +11,7 @@ import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
 import { $, showMessage } from "./ui/dom";
 import { IssuePanel } from "./ui/issuePanel";
-import { renderDisplay, renderMeasures, renderProps, renderToolPanel, updatePcStats } from "./ui/viewPanels";
+import { renderDisplay, renderMeasures, renderProps, renderToolPanel, syncToolPanel, updatePcStats } from "./ui/viewPanels";
 
 async function main() {
   if (!isHosted) {
@@ -41,7 +41,8 @@ async function main() {
   const syncClipButtons = () =>
     document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => x.classList.toggle("active", x.dataset.clip === app.clipping.mode));
   app.on("clip", () => {
-    renderToolPanel(app);
+    // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
+    syncToolPanel(app);
     syncClipButtons();
   });
   app.on("align", () => renderToolPanel(app));

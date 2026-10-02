@@ -4,8 +4,10 @@ import { formatCount } from "../data/dataset";
 import { host } from "../host";
 import { ColorMode, SizeMode } from "../pointcloud/material";
 import { solveRigid } from "../tools/align";
+import { MIN_BOX_SIZE } from "../tools/clipBoxEdit";
 import { fmtM } from "../tools/measure";
 import { $, h, mount, showMessage } from "./dom";
+import { rangeSlider } from "./rangeSlider";
 
 const BUDGETS = [500_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 10_000_000, 20_000_000];
 
@@ -160,10 +162,27 @@ export function renderMeasures(app: App) {
   );
 }
 
+/** 今のツールパネルの値を、作り直さずに合わせる関数（スライダーをドラッグ中に DOM を作り直すと掴みが外れる） */
+let panelSync: { key: string; sync: () => void } | null = null;
+
+function panelKey(app: App): string {
+  return `${app.tool === "align" ? "align" : app.clipping.mode}|${app.clipping.section.axis}|${app.clipping.extent.min.toArray()}|${app.clipping.extent.max.toArray()}`;
+}
+
+/**
+ * 切断の値だけが変わったとき（スライダー・3D のドラッグ）に呼ぶ。
+ * パネルの構成が同じなら値だけ合わせ、違えば作り直す。
+ */
+export function syncToolPanel(app: App) {
+  if (panelSync && panelSync.key === panelKey(app)) panelSync.sync();
+  else renderToolPanel(app);
+}
+
 /** 画面右上のツールパネル（切断・3点合わせ） */
 export function renderToolPanel(app: App) {
   const el = $("#tool-panel");
   const clip = app.clipping;
+  panelSync = null;
   if (app.tool === "align") {
     renderAlignPanel(app, el);
     el.classList.remove("hidden");
@@ -175,9 +194,7 @@ export function renderToolPanel(app: App) {
   }
   el.classList.remove("hidden");
   const ext = clip.extent;
-  const pad = ext.getSize(new THREE.Vector3()).multiplyScalar(0.05);
-  const lo = ext.min.clone().sub(pad);
-  const hi = ext.max.clone().add(pad);
+  const { lo, hi } = clip.limits();
   const step = 0.01;
   const slider = (label: string, value: number, min: number, max: number, set: (v: number) => void) =>
     h("div", { class: "row small" }, h("label", null, label), h("input", { type: "range", class: "grow", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": label,
@@ -185,13 +202,30 @@ export function renderToolPanel(app: App) {
   if (clip.mode === "box") {
     const b = clip.box;
     const axes = ["x", "y", "z"] as const;
+    const sliders = axes.map((a) =>
+      rangeSlider({
+        label: a.toUpperCase(),
+        lo: lo[a],
+        hi: hi[a],
+        minGap: MIN_BOX_SIZE,
+        get: () => ({ min: b.min[a], max: b.max[a] }),
+        set: (min, max) => {
+          b.min[a] = min;
+          b.max[a] = max;
+          clip.apply();
+        },
+        format: (min, max) => `幅 ${fmtM(max - min)}`,
+      }),
+    );
+    panelSync = { key: panelKey(app), sync: () => sliders.forEach((s) => s.sync()) };
     mount(
       el,
       h("h3", null, "切断ボックス"),
-      axes.map((a) => [
-        slider(`${a.toUpperCase()} 最小`, b.min[a], lo[a], hi[a], (v) => { b.min[a] = Math.min(v, b.max[a] - 0.01); clip.apply(); }),
-        slider(`${a.toUpperCase()} 最大`, b.max[a], lo[a], hi[a], (v) => { b.max[a] = Math.max(v, b.min[a] + 0.01); clip.apply(); }),
-      ]),
+      sliders.map((s) => s.el),
+      h("label", { class: "row small" },
+        h("input", { type: "checkbox", checked: app.clipEditor.enabled, onchange: (e: Event) => { app.clipEditor.enabled = (e.target as HTMLInputElement).checked; app.clipEditor.refresh(); } }),
+        "3D で面をドラッグして動かす"),
+      h("div", { class: "small muted" }, "手前の面はそのままドラッグ、奥の面（箱の内側）は Shift を押しながらドラッグ。箱の外をドラッグすると回転します。"),
       h("div", { class: "row" },
         h("button", { disabled: !app.lastPick, title: "最後にクリックした位置の周り 4m の箱", onclick: () => { if (app.lastPick) { clip.boxAround(app.lastPick.point, 2); renderToolPanel(app); } } }, "選択位置の周り"),
         h("button", { onclick: () => { clip.setBox(ext); renderToolPanel(app); } }, "全体に戻す"),
@@ -200,6 +234,21 @@ export function renderToolPanel(app: App) {
     );
   } else {
     const s = clip.section;
+    const pos = slider("位置", s.position, lo[s.axis], hi[s.axis], (v) => clip.setSection({ position: v }));
+    const posInput = pos.querySelector("input")!;
+    const thickness = h("select", { onchange: (e: Event) => clip.setSection({ thickness: Number((e.target as HTMLSelectElement).value) }) },
+      [[0, "片側を残す"], [0.05, "5 cm"], [0.1, "10 cm"], [0.3, "30 cm"], [1, "1 m"]].map(([v, l]) => h("option", { value: String(v), selected: s.thickness === v }, l as string)));
+    const flip = h("input", { type: "checkbox", checked: s.flip, onchange: (e: Event) => clip.setSection({ flip: (e.target as HTMLInputElement).checked }) });
+    panelSync = {
+      key: panelKey(app),
+      sync: () => {
+        const cur = clip.section;
+        if (Number(posInput.value) !== cur.position) posInput.value = String(cur.position);
+        thickness.value = String(cur.thickness);
+        flip.checked = cur.flip;
+        updateSectionLabel(app);
+      },
+    };
     mount(
       el,
       h("h3", null, "断面"),
@@ -209,10 +258,9 @@ export function renderToolPanel(app: App) {
           clip.setSection({ axis: a, position: c[a] });
           renderToolPanel(app);
         } }, a === "z" ? "水平" : `垂直（${a.toUpperCase()}）`))),
-      slider("位置", s.position, lo[s.axis], hi[s.axis], (v) => { clip.setSection({ position: v }); updateSectionLabel(app); }),
-      h("div", { class: "row small" }, h("label", null, "厚み"), h("select", { onchange: (e: Event) => clip.setSection({ thickness: Number((e.target as HTMLSelectElement).value) }) },
-        [[0, "片側を残す"], [0.05, "5 cm"], [0.1, "10 cm"], [0.3, "30 cm"], [1, "1 m"]].map(([v, l]) => h("option", { value: String(v), selected: s.thickness === v }, l as string)))),
-      h("label", { class: "row small" }, h("input", { type: "checkbox", checked: s.flip, onchange: (e: Event) => clip.setSection({ flip: (e.target as HTMLInputElement).checked }) }), "残す側を反対にする"),
+      pos,
+      h("div", { class: "row small" }, h("label", null, "厚み"), thickness),
+      h("label", { class: "row small" }, flip, "残す側を反対にする"),
       h("div", { class: "small muted", id: "section-label" }),
       h("div", { class: "row" },
         h("button", { disabled: !app.lastPick, onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderToolPanel(app); } } }, "選択位置に合わせる"),

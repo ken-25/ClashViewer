@@ -20,7 +20,9 @@
 | `e2e/` | E2E テスト（実 exe を起動して WebView2 を操作） | Node + playwright-core |
 | `scripts/` | ビルド・配布スクリプト | PowerShell |
 | `third_party/` | 同梱外部バイナリ（PotreeConverter）。取得物のため未コミット | — |
-| `dist/share/` | 配布一式の出力先（共有フォルダに置くもの） | — |
+| `dist/` | 配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）。共有フォルダへ上書きコピーしてよいものだけ。未コミット | — |
+| `dev/share/` | 開発・E2E 用の共有データ（`config/`・`datasets/`・`events/`・`issues/`）。未コミット | — |
+| `dev/screenshots/` | E2E のスクリーンショット。未コミット | — |
 
 共有フォルダ上のフォルダ構成は [要件定義.md 5章](要件定義.md) を参照。
 
@@ -48,22 +50,28 @@ uv sync --project converter        # 変換エンジンの依存
 
 ## ビルド・リリース
 
-配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`・`config/`）を作る。
+配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）を `dist/` に作る。
 
 ```powershell
-scripts/build.ps1                                  # dist/share に一式を作る
-scripts/build.ps1 -Out "<Box の共有フォルダ>"       # 共有フォルダへ直接リリース（datasets/ 等は消さない）
-scripts/build.ps1 -SkipConverter                   # 変換エンジンの再ビルドを省く（既にあれば）
-scripts/build.ps1 -SkipHost                        # ビューア exe の再ビルドを省く
+scripts/build.ps1                  # dist/ を作り直す
+scripts/build.ps1 -SkipConverter   # 変換エンジンは前回のビルド（build/converter-dist）を使う
+scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（build/host）を使う
 ```
 
-`build.ps1` が行うこと: 画面を Vite でビルド → exe を `dotnet publish -c Release` → PotreeConverter と変換エンジン（PyInstaller onedir）を `tools/` に配置 → `config/` を用意。
-Box の共有フォルダへ直接出力すればそれがリリースになる（exe・`viewer/`・`tools/` は上書き更新。`datasets/`・`events/`・`issues/` は残る）。
+`build.ps1` が行うこと: `dist/` を空にする → 画面を Vite でビルド → exe を `dotnet publish -c Release` → PotreeConverter と変換エンジン（PyInstaller onedir）を `tools/` に配置。
+`dist/` にはデータ（`config/`・`datasets/`・`events/`・`issues/`）を入れない。データのフォルダが見つかったら消さずに止まる。
+
+### リリース
+
+`dist/` の中身を共有フォルダへ手動で上書きコピーする。共有フォルダの `config/`・`datasets/`・`events/`・`issues/` は触らない（`dist/` に無いので上書きされない）。
+起動中の人がいると exe の置き換えが保留されるので、コピー後に再起動を案内する。
+
+`viewer/assets/` の古いファイル（ファイル名にハッシュ付き）は共有フォルダに残るが、新しい `index.html` からは参照されないので害はない。気になるときは `viewer/` を消してからコピーする。
 
 ### 画面だけ作り直す（開発用の短縮）
 
 ```powershell
-scripts/build-viewer.ps1           # 型チェック + Vite ビルドして dist/share/viewer に置く
+scripts/build-viewer.ps1           # 型チェック + Vite ビルドして dist/viewer に置く
 ```
 
 ## 開発コマンド
@@ -82,7 +90,8 @@ scripts/build-viewer.ps1           # 型チェック + Vite ビルドして dist
 
 ## E2E テスト
 
-実際にビルドした exe を起動し、WebView2 を操作して確認する。先に `scripts/build.ps1` で一式を作っておく。
+実際にビルドした exe（`dist/`）を起動し、WebView2 を操作して確認する。先に `scripts/build.ps1` で一式を作っておく。
+データは `dev/share/`（環境変数 `CV_SHARE` で変更可）、スクリーンショットは `dev/screenshots/` に書く。
 
 ```powershell
 npm --prefix e2e ci                # 初回だけ
@@ -94,4 +103,12 @@ node e2e/perf.mjs <データセットのフォルダ>              # 性能（--
 
 ## 実行
 
-`dist/share/干渉ビューア.exe`（または共有フォルダ上の `干渉ビューア.exe`）をダブルクリックする。
+```powershell
+scripts/run.ps1                              # dist/ の exe を dev/share のデータで起動（開発モード）
+scripts/run.ps1 -Root "<Box の共有フォルダ>"  # 手元のビルドで共有フォルダのデータを見る
+```
+
+`dist/干渉ビューア.exe` を直接ダブルクリックしない。exe の隣（`dist/`）にデータのフォルダが作られ、`dist/` が配布物だけでなくなる。
+`--root` で変わるのはデータの場所だけで、`viewer/`・`tools/` は常に exe の隣のものを使う。
+
+利用者は共有フォルダ上の `干渉ビューア.exe` をダブルクリックする（exe の隣がデータのルートになる）。

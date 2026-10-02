@@ -3,7 +3,7 @@
 // 点群は dev/make_samples.py --survey で作った「測量座標」のもの（正解: Z 回り 23.5° 回転＋(-35210, 12880, 3.2) 移動）
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { launch, assert, share } from "./lib.mjs";
+import { launch, assert, share, shots } from "./lib.mjs";
 
 const [latest, previous] = process.argv.slice(2);
 const TRUTH = { yaw: (23.5 * Math.PI) / 180, shift: [-35210, 12880, 3.2] };
@@ -199,7 +199,7 @@ try {
   assert(ov.inter, "合わせ後、モデルと点群の範囲が重なる");
   await page.evaluate(() => window.__cv.app.viewer.fit(window.__cv.app.models.box()));
   await idle(2000);
-  await page.screenshot({ path: join(share, "..", "e2e-overlay.png") });
+  await page.screenshot({ path: join(shots, "e2e-overlay.png") });
 
   // ======== 計測（点群・モデルの混在） ========
   const mb2 = await page.evaluate(() => {
@@ -298,13 +298,13 @@ try {
   await clickAt(0.03, 0.03);
   const outside = await lastPick();
   assert(clip.planes === 6 && clip.pcClip && outside === null, "切断ボックス（6 面、点群・モデル共通、外側は拾わない）");
-  await page.screenshot({ path: join(share, "..", "e2e-clipbox.png") });
+  await page.screenshot({ path: join(shots, "e2e-clipbox.png") });
   await page.click('[data-clip="section"]');
   await page.evaluate(() => window.__cv.app.clipping.setSection({ axis: "z", thickness: 0.3 }));
   const sec = await page.evaluate(() => window.__cv.app.viewer.renderer.clippingPlanes.length);
   await page.click('[data-view="top"]');
   await idle(1500);
-  await page.screenshot({ path: join(share, "..", "e2e-section.png") });
+  await page.screenshot({ path: join(shots, "e2e-section.png") });
   assert(sec === 2, "水平断面（厚み 30 cm の薄切り）");
   await page.click('[data-clip="none"]');
   await idle(500);
@@ -347,7 +347,7 @@ try {
   // 変更された柱へ寄る
   await page.click("#tab-diff details[open] .diff-list div");
   await idle(1500);
-  await page.screenshot({ path: join(share, "..", "e2e-diff.png") });
+  await page.screenshot({ path: join(shots, "e2e-diff.png") });
   results.diff = diffText.split("\n").slice(0, 12).join(" | ");
   assert(/追加\s*\n?\s*1 件/.test(diffText) && /削除\s*\n?\s*5 件/.test(diffText), "差分タブ（追加 1・変更・削除 5）と色分け表示");
   await page.click('#tab-diff input[type="checkbox"]');
@@ -379,7 +379,7 @@ try {
   await page.waitForFunction(() => [...window.__cv.app.issues.values()].at(-1).status === "対応中");
   const files = readdirSync(join(share, "events"));
   assert(files.includes("e2e-tanaka.jsonl") && files.includes("e2e-sato.jsonl"), "状態変更は自分のファイル（events/e2e-tanaka.jsonl）にだけ追記");
-  await page.screenshot({ path: join(share, "..", "e2e-issue-other.png") });
+  await page.screenshot({ path: join(shots, "e2e-issue-other.png") });
 } finally {
   await app2.close();
 }

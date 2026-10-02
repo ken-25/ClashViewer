@@ -19,7 +19,10 @@ env/
 
 # PyInstaller / Nuitka のビルド成果物
 build/
+# 配布一式（scripts/build.ps1 の出力。共有フォルダへ上書きコピーするものだけ）
 dist/
+# 開発・E2E 用の共有データとスクリーンショット
+dev/
 *.spec.bak
 
 # ===== Node / JS (viewer) =====

@@ -10,6 +10,7 @@ import { ColorMode } from "./pointcloud/material";
 import { PotreePointCloud } from "./pointcloud/potree";
 import { Picker, type Pick } from "./scene/picker";
 import { Viewer3D } from "./scene/viewer3d";
+import { ClipBoxEditor } from "./tools/clipBoxEdit";
 import { Clipping } from "./tools/clipping";
 import { LocalFrame, MeasureTool } from "./tools/measure";
 import { $ } from "./ui/dom";
@@ -33,6 +34,7 @@ export class App {
   readonly models: ModelManager;
   readonly picker: Picker;
   readonly clipping: Clipping;
+  readonly clipEditor: ClipBoxEditor;
   readonly frame: LocalFrame;
   readonly measure: MeasureTool;
   datasets: Manifest[] = [];
@@ -59,7 +61,10 @@ export class App {
     this.viewer = new Viewer3D($("#view"));
     this.models = new ModelManager(this.viewer);
     this.picker = new Picker(this.viewer, this.models);
+    // ホイールはカーソル下の物体（点群・モデル。切断で隠れた物は除く）へ寄る
+    this.viewer.zoomPick = async (x, y) => (await this.picker.pick(x, y))?.point ?? null;
     this.clipping = new Clipping(this.viewer);
+    this.clipEditor = new ClipBoxEditor(this.viewer, this.clipping);
     this.frame = new LocalFrame(this.viewer);
     this.measure = new MeasureTool(this.viewer, this.frame);
     this.measure.onChange = () => this.emit("measures");
@@ -67,6 +72,7 @@ export class App {
       if (this.pc) this.pc.clipBox = this.clipping.mode === "box" ? this.clipping.box : null;
       this.pc?.invalidate();
       void this.models.update(true);
+      this.clipEditor.refresh();
       this.emit("clip");
     };
     this.issuePins.name = "issues";

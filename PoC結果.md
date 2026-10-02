@@ -7,8 +7,8 @@
 
 ```
 scripts/fetch-third-party.ps1   # 初回だけ（PotreeConverter 2.1.5 を取得）
-scripts/build.ps1               # dist/share に共有フォルダ一式を作る（アプリ一式 181 MB）
-dist/share/干渉ビューア.exe      # ダブルクリックで起動
+scripts/build.ps1               # dist/ に配布一式を作る（アプリ一式 181 MB）
+scripts/run.ps1                 # dist/ の exe を dev/share のデータで起動
 ```
 
 | 場所 | 内容 |

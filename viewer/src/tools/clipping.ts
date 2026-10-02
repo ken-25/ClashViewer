@@ -38,6 +38,12 @@ export class Clipping {
   /** シーン全体の範囲（初期値の基準） */
   extent = new THREE.Box3(new THREE.Vector3(-10, -10, -10), new THREE.Vector3(10, 10, 10));
 
+  /** 箱・断面を動かせる範囲（全体の範囲を各辺 5% 広げたもの） */
+  limits(): { lo: THREE.Vector3; hi: THREE.Vector3 } {
+    const pad = this.extent.getSize(new THREE.Vector3()).multiplyScalar(0.05);
+    return { lo: this.extent.min.clone().sub(pad), hi: this.extent.max.clone().add(pad) };
+  }
+
   setMode(mode: ClipMode) {
     this.mode = mode;
     if (mode === "box" && this.box.isEmpty()) this.box.copy(this.extent);

@@ -1,7 +1,7 @@
 // 起動・Range 要求（懸念2）・書き込み API の確認
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { launch, assert, share } from "./lib.mjs";
+import { launch, assert, share, shots } from "./lib.mjs";
 
 const app = await launch();
 const { page } = app;
@@ -44,7 +44,7 @@ try {
   assert(w.ok === 200 && w.okBody.includes('"size":3'), "issues/ への書き込み");
   assert(w.ng === 403, "tools/ への書き込みは拒否");
   assert(w.trav === 403 || w.trav === 404, "共有フォルダの外は読めない");
-  await page.screenshot({ path: join(share, "..", "e2e-smoke.png") });
+  await page.screenshot({ path: join(shots, "e2e-smoke.png") });
 } finally {
   await app.close();
 }
