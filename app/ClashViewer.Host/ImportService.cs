@@ -155,12 +155,12 @@ public sealed class ImportService
             throw new InvalidOperationException(error ?? $"変換エンジンが終了コード {proc.ExitCode} で終わりました。{tail}");
         }
 
-        // 共有フォルダへ写す（同期対象には完成品だけを置く）
+        // データフォルダへ写す（取込中フォルダには完成品だけを置く）
         var dest = Path.Combine(s.Dir, "pointcloud");
         Directory.CreateDirectory(dest);
         var files = new[] { "metadata.json", "hierarchy.bin", "octree.bin" };
         long total = files.Sum(f => new FileInfo(Path.Combine(outLocal, f)).Length), done = 0;
-        Emit(id, "pointcloud", new JsonObject { ["event"] = "stage", ["stage"] = "copy", ["label"] = "共有フォルダへ書き込み", ["weight"] = 0.0 });
+        Emit(id, "pointcloud", new JsonObject { ["event"] = "stage", ["stage"] = "copy", ["label"] = "データフォルダへ書き込み", ["weight"] = 0.0 });
         var buf = new byte[4 << 20];
         var sw = Stopwatch.StartNew();
         foreach (var f in files)

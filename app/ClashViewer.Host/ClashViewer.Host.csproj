@@ -8,7 +8,8 @@
     <RootNamespace>ClashViewer.Host</RootNamespace>
     <AssemblyName>ClashViewer</AssemblyName>
     <Product>干渉ビューア</Product>
-    <Version>0.1.0</Version>
+    <!-- バージョンはリポジトリ直下の VERSION が唯一の正（SSOT）。ここに数字を書かない -->
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- 配布はランタイム同梱の単一ファイル（scripts/build.ps1 で publish） -->

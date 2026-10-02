@@ -3,7 +3,7 @@
   開発用に dist/干渉ビューア.exe を起動する。データは dev/share（既定）を使い、dist/ には何も書かない。
 
 .PARAMETER Root
-  共有データのルート（既定: dev/share）。Box 上の共有フォルダを指定すれば、手元のビルドで本番データを見られる。
+  データのルート（既定: dev/share）。インストール版のデータを見るなら $env:LOCALAPPDATA\ClashViewer\data を指定する。
 .PARAMETER NoDev
   開発モード（開発者ツール等）を付けずに起動する。
 #>
