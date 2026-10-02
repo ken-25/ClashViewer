@@ -16,6 +16,67 @@ from pyquaternion import Quaternion
 
 CHUNK_POINTS = 2_000_000
 
+E57_SIGNATURE = b"ASTM-E57"
+# E57 の物理ヘッダ: 署名 8 + 版 4+4 + ファイル長 8 + XML 位置 8 + XML 長 8 + ページ長 8
+E57_HEADER_SIZE = 48
+
+# E57 と取り違えやすい形式の先頭バイト
+_KNOWN_SIGNATURES: list[tuple[bytes, str]] = [
+    (b"PK\x03\x04", "ZIP 圧縮ファイル"),
+    (b"LASF", "LAS / LAZ 形式の点群"),
+    (b"Rar!", "RAR 圧縮ファイル"),
+    (b"7z\xbc\xaf\x27\x1c", "7-Zip 圧縮ファイル"),
+    (b"ISO-10303-21", "IFC / STEP ファイル"),
+]
+
+
+class E57FormatError(ValueError):
+    """E57 として読めないファイル。message は利用者向けの日本語。"""
+
+
+def _guess_format(head: bytes) -> str | None:
+    for sig, label in _KNOWN_SIGNATURES:
+        if head.startswith(sig):
+            return label
+    if head and all(b == 0 for b in head):
+        return None  # 呼び出し側で「中身が空」と扱う
+    sample = head[:64]
+    if sample and all(32 <= b < 127 or b in (9, 10, 13) for b in sample):
+        return "テキスト形式の点群（PTX / PTS / XYZ など）"
+    return None
+
+
+def check_signature(path: str) -> None:
+    """libE57Format に渡す前に先頭を調べ、E57 でなければ分かる言葉で止める。"""
+    import os
+
+    name = os.path.basename(path)
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        head = f.read(E57_HEADER_SIZE)
+    if size == 0:
+        raise E57FormatError(f"{name} は 0 バイトです。Box などの同期が終わっているか確認してください")
+    if not head.startswith(E57_SIGNATURE):
+        if all(b == 0 for b in head):
+            raise E57FormatError(
+                f"{name} は先頭が空（0 埋め）で、E57 として読めません。"
+                "同期の途中か、ファイルが壊れている可能性があります"
+            )
+        kind = _guess_format(head)
+        what = f"中身は{kind}のようです" if kind else "中身は別の形式です"
+        raise E57FormatError(
+            f"{name} は拡張子が .e57 ですが、E57 形式ではありません（{what}）。"
+            "スキャンソフトから E57 で書き出し直してください"
+        )
+    if len(head) < E57_HEADER_SIZE:
+        raise E57FormatError(f"{name} は E57 のヘッダが途中で切れています。ファイルが壊れている可能性があります")
+    declared = int.from_bytes(head[16:24], "little")
+    if declared > size:
+        raise E57FormatError(
+            f"{name} は途中までしかありません（{size:,} / {declared:,} バイト）。"
+            "コピーや同期が終わっているか確認してください"
+        )
+
 
 @dataclass
 class ScanInfo:
@@ -60,6 +121,7 @@ def _fields(node) -> list[str]:
 class E57Reader:
     def __init__(self, path: str):
         self.path = path
+        check_signature(path)
         self.image = libe57.ImageFile(path, "r")
         root = self.image.root()
         # pye57 の [] アクセスは具体的なノード型を返す
