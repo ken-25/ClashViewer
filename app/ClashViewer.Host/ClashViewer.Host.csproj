@@ -18,6 +18,8 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
+    <!-- .NET のメッセージ類は日本語だけを同梱する（英語は既定で内蔵） -->
+    <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
     <!-- WebView2 パッケージが WPF 版も参照するための警告（WinForms 版だけを使う） -->
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>

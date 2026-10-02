@@ -56,7 +56,14 @@ $pcSrc = Get-ChildItem (Join-Path $repo "third_party\PotreeConverter") -Director
 if (-not $pcSrc) { throw "third_party/PotreeConverter がありません（scripts/fetch-third-party.ps1 を実行）" }
 $pcDst = Join-Path $dist "tools\PotreeConverter"
 New-Item -ItemType Directory -Force $pcDst | Out-Null
-Copy-Item (Join-Path $pcSrc.FullName "*") $pcDst -Recurse
+# 変換に要るのは exe と laszip.dll だけ。resources/page_template（約 400 ファイル・47 MB）は
+# --generate-page 用の Web ビューア一式で使わないので入れない。ライセンス表示は残す
+foreach ($name in "PotreeConverter.exe", "laszip.dll") {
+  $f = Join-Path $pcSrc.FullName $name
+  if (-not (Test-Path $f)) { throw "third_party/PotreeConverter に $name がありません" }
+  Copy-Item $f $pcDst
+}
+Copy-Item (Join-Path $pcSrc.FullName "licenses") $pcDst -Recurse
 
 Write-Host "== tools/converter (PyInstaller onedir)"
 $convBuilt = Join-Path $repo "build\converter-dist\converter"
