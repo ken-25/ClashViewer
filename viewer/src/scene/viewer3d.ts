@@ -4,6 +4,20 @@ import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
 export type ViewKind = "iso" | "top" | "front" | "back" | "right" | "left";
 
+/** 左ドラッグの回転 1 回分 */
+interface OrbitDrag {
+  pointerId: number;
+  /** 直前のカーソル位置 */
+  x: number;
+  y: number;
+  /** 回転の中心。カーソル下の取得（非同期）を待つ間は null で、その間の移動量は pending に溜める */
+  pivot: THREE.Vector3 | null;
+  pendingX: number;
+  pendingY: number;
+  released: boolean;
+  cancelled: boolean;
+}
+
 /**
  * three.js の土台。点群とモデルを同じシーン・同じ深度バッファで描く。
  * 座標は Z 上・メートル。シーン座標＝世界座標 − データセットの原点オフセット（float32 の精度を保つため）。
@@ -46,10 +60,19 @@ export class Viewer3D {
     // ホイールは自前で処理する（カーソル下の物体までの距離に比例して寄る）。OrbitControls の
     // ズームは注視点までの距離で拡縮するため、注視点に近づくと寄れなくなる
     this.controls.enableZoom = false;
+    // 回転も自前で処理する（カーソル下の物体を中心に回す）。OrbitControls は注視点（画面の中心）を
+    // 中心にしか回せない。左ボタン＋Ctrl/Shift の移動は OrbitControls に残す
+    this.controls.enableRotate = false;
     this.controls.screenSpacePanning = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     this.controls.addEventListener("change", () => this.requestRender());
     this.renderer.domElement.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    // OrbitControls（構築時に登録済み）と切断箱の編集（capture で先に受けて controls を止める）の
+    // 後に受ける。移動・離すは画面外へ出ても拾えるよう window で受ける
+    this.renderer.domElement.addEventListener("pointerdown", (e) => this.onOrbitDown(e));
+    window.addEventListener("pointermove", (e) => this.onOrbitMove(e));
+    window.addEventListener("pointerup", (e) => this.onOrbitUp(e));
+    window.addEventListener("pointercancel", (e) => this.onOrbitUp(e));
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.2));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -142,13 +165,125 @@ export class Viewer3D {
     }
   }
 
-  // ---- ホイールでの拡大縮小 ----
+  /**
+   * カーソル下の物体（点群・モデル）の位置（シーン座標）を返す。ホイールで寄る先と回転の中心に使う。
+   * 未設定または何も無いときは、寄る先は注視点と同じ奥行きの位置、回転の中心は注視点（画面の中心）。
+   */
+  pickPoint: ((clientX: number, clientY: number) => Promise<THREE.Vector3 | null>) | null = null;
+
+  // ---- 左ドラッグでの回転 ----
+
+  /** 回転の操作中。中心はカーソル下の取得（非同期）を待つ間 null で、その間の移動量は溜めておく */
+  private orbit: OrbitDrag | null = null;
+  /** 画面に触れている指（2 本目が来たら回転をやめて OrbitControls の移動に任せる） */
+  private readonly touches = new Set<number>();
+
+  private onOrbitDown(e: PointerEvent) {
+    if (e.pointerType === "touch") {
+      this.touches.add(e.pointerId);
+      if (this.touches.size > 1) {
+        this.cancelOrbit();
+        return;
+      }
+    }
+    if (!this.controls.enabled || e.button !== 0 || this.orbit) return;
+    // 左ボタン＋Ctrl/Shift は OrbitControls が移動として扱う（タッチは修飾キーを見ない）
+    if (e.pointerType !== "touch" && (e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    const orbit: OrbitDrag = {
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      pivot: null,
+      pendingX: 0,
+      pendingY: 0,
+      released: false,
+      cancelled: false,
+    };
+    this.orbit = orbit;
+    void this.resolveOrbitPivot(orbit, e.clientX, e.clientY);
+  }
+
+  /** 押した位置の物体を回転の中心にする。何も無ければ注視点（画面の中心） */
+  private async resolveOrbitPivot(orbit: OrbitDrag, clientX: number, clientY: number) {
+    const hit = this.pickPoint ? await this.pickPoint(clientX, clientY).catch(() => null) : null;
+    if (orbit.cancelled) return;
+    orbit.pivot = hit ?? this.controls.target.clone();
+    if (orbit.pendingX === 0 && orbit.pendingY === 0) return;
+    this.rotateAround(orbit.pivot, orbit.pendingX, orbit.pendingY);
+    orbit.pendingX = orbit.pendingY = 0;
+    // 取得を待つ間に離していたら、OrbitControls の "end" は回す前に出ている。出し直して LOD を更新させる
+    if (orbit.released) this.controls.dispatchEvent({ type: "end" });
+  }
+
+  private onOrbitMove(e: PointerEvent) {
+    const o = this.orbit;
+    if (!o || e.pointerId !== o.pointerId) return;
+    if (!this.controls.enabled) {
+      this.cancelOrbit();
+      return;
+    }
+    const dx = e.clientX - o.x;
+    const dy = e.clientY - o.y;
+    o.x = e.clientX;
+    o.y = e.clientY;
+    if (dx === 0 && dy === 0) return;
+    if (o.pivot) {
+      this.rotateAround(o.pivot, dx, dy);
+    } else {
+      o.pendingX += dx;
+      o.pendingY += dy;
+    }
+  }
+
+  private onOrbitUp(e: PointerEvent) {
+    if (e.pointerType === "touch") this.touches.delete(e.pointerId);
+    const o = this.orbit;
+    if (!o || e.pointerId !== o.pointerId) return;
+    this.orbit = null;
+    o.released = true;
+  }
+
+  private cancelOrbit() {
+    if (!this.orbit) return;
+    this.orbit.cancelled = true;
+    this.orbit = null;
+  }
 
   /**
-   * カーソル下の物体の位置（シーン座標）を返す。ホイールで寄る先に使う。
-   * 未設定または何も無いときは、注視点と同じ奥行きの位置へ寄る。
+   * pivot を中心にカメラを回す（Z 上のターンテーブル）。横の移動は Z 軸まわり、縦の移動は
+   * カメラの右方向の軸まわり。量と向きは OrbitControls と同じ（画面の高さ分で 1 周、物体が
+   * カーソルに付いて動く向き）。真上・真下を越えないよう縦の角度は止める。
+   * 注視点は視線上の pivot と同じ奥行きへ置き直す（移動の速さと近クリップ面を物体に合わせる）。
    */
-  zoomPick: ((clientX: number, clientY: number) => Promise<THREE.Vector3 | null>) | null = null;
+  private rotateAround(pivot: THREE.Vector3, dx: number, dy: number) {
+    const cam = this.camera;
+    const h = this.canvas.clientHeight || 1;
+    const k = (2 * Math.PI * this.controls.rotateSpeed) / h;
+    const azimuth = -dx * k;
+    // 視線の逆向き（カメラ側）と +Z のなす角。0 で真上から見下ろす
+    const fwd = cam.getWorldDirection(new THREE.Vector3());
+    const polar = Math.acos(THREE.MathUtils.clamp(-fwd.z, -1, 1));
+    const eps = 1e-5;
+    const nextPolar = THREE.MathUtils.clamp(polar - dy * k, Math.min(eps, polar), Math.max(Math.PI - eps, polar));
+    const elevation = nextPolar - polar;
+
+    const qAz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), azimuth);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion).applyQuaternion(qAz);
+    right.z = 0; // ロールは無いので水平のはず。誤差を落とす
+    if (right.lengthSq() < 1e-12) return;
+    const qEl = new THREE.Quaternion().setFromAxisAngle(right.normalize(), elevation);
+    const q = qEl.multiply(qAz); // 先に Z 軸まわり、次に右方向の軸まわり
+
+    cam.position.sub(pivot).applyQuaternion(q).add(pivot);
+    cam.quaternion.premultiply(q);
+    const fwd2 = cam.getWorldDirection(new THREE.Vector3());
+    const depth = Math.max(pivot.clone().sub(cam.position).dot(fwd2), 0.02);
+    this.controls.target.copy(cam.position).addScaledVector(fwd2, depth);
+    this.controls.update(); // "change" が出て、描き直しとモデルの LOD 更新が走る
+    this.requestRender();
+  }
+
+  // ---- ホイールでの拡大縮小 ----
   /** ホイール 1 目盛りで、寄る先までの距離に掛ける比率（0.8 = 2 割寄る） */
   zoomRatio = 0.8;
 
@@ -180,7 +315,7 @@ export class Viewer3D {
         const { x, y } = this.zoomCursor;
         let pivot = this.validZoomPivot(x, y);
         if (!pivot) {
-          const hit = this.zoomPick ? await this.zoomPick(x, y).catch(() => null) : null;
+          const hit = this.pickPoint ? await this.pickPoint(x, y).catch(() => null) : null;
           pivot = {
             point: hit ?? this.fallbackZoomPoint(x, y),
             x,
