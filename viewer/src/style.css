@@ -500,6 +500,191 @@ body.tool-active .issue-pin {
   color: #fff;
 }
 
+/* 位置の目印（画面端の矢印・方位・平面図） */
+#nav-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+.nav-chip {
+  --k: #c8ccd2;
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 6px;
+  border-radius: 12px;
+  background: rgba(20, 22, 26, 0.88);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 280px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.nav-chip:hover {
+  border-color: var(--k);
+}
+.nav-chip.k-model {
+  --k: #5aa2ff;
+}
+.nav-chip.k-worldOrigin {
+  --k: #ffd25a;
+}
+.nav-chip.k-frameOrigin {
+  --k: #ffffff;
+}
+.nav-arrow {
+  display: inline-block;
+  color: var(--k);
+  font-size: 11px;
+  line-height: 1;
+}
+.nav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--k);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-dist {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.nav-chip.at {
+  /* 画面内（遠くて小さい・原点）は控えめに。見ている物を隠さないように */
+  background: rgba(20, 22, 26, 0.55);
+  border-color: transparent;
+  box-shadow: none;
+  font-size: 11px;
+}
+body.tool-active .nav-chip.at {
+  /* 計測・合わせ中は、画面内の目印で下の点を拾えなくならないように */
+  pointer-events: none;
+  opacity: 0.6;
+}
+#nav-axes {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 76px;
+  height: 76px;
+  z-index: 1;
+}
+#nav-axes .axes-bg {
+  fill: rgba(20, 22, 26, 0.6);
+  stroke: var(--line);
+}
+#nav-axes .axis {
+  cursor: pointer;
+}
+#nav-axes .axis:hover circle {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+#nav-axes text {
+  font-size: 9px;
+  font-weight: 700;
+  fill: #111;
+  pointer-events: none;
+}
+#minimap {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 222px;
+  background: rgba(20, 22, 26, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  z-index: 1;
+  font-size: 11px;
+}
+.minimap-head {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px 0 8px;
+  color: var(--muted);
+}
+.minimap-close {
+  border: none;
+  background: none;
+  padding: 0 6px;
+  color: var(--muted);
+}
+.minimap-svg {
+  display: block;
+  cursor: crosshair;
+}
+.minimap-svg text {
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: rgba(20, 22, 26, 0.9);
+  stroke-width: 3px;
+}
+.minimap-svg rect {
+  cursor: pointer;
+}
+.mm-cloud {
+  fill: rgba(200, 204, 210, 0.25);
+  stroke: #c8ccd2;
+}
+text.mm-cloud {
+  fill: #c8ccd2;
+}
+rect.mm-model {
+  fill: rgba(90, 162, 255, 0.25);
+  stroke: #5aa2ff;
+}
+text.mm-model {
+  fill: #5aa2ff;
+}
+.mm-world path,
+.mm-world circle {
+  stroke: #ffd25a;
+  fill: #ffd25a;
+  stroke-width: 1.5;
+}
+text.mm-world {
+  fill: #ffd25a;
+}
+.mm-frame path,
+.mm-frame circle {
+  stroke: #fff;
+  fill: #fff;
+  stroke-width: 1.5;
+}
+text.mm-frame {
+  fill: #fff;
+}
+.mm-axes path,
+.mm-scale path {
+  stroke: var(--muted);
+  fill: none;
+}
+.mm-axes text,
+.mm-scale text {
+  fill: var(--muted);
+}
+.mm-view {
+  fill: rgba(255, 255, 255, 0.18);
+  stroke: rgba(255, 255, 255, 0.6);
+}
+.mm-cam {
+  fill: #fff;
+  stroke: #111;
+  stroke-width: 1.5;
+}
+.mm-cam.outside {
+  fill: none;
+  stroke: #fff;
+}
+
 /* 属性 */
 .props table {
   width: 100%;

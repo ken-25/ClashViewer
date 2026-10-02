@@ -146,10 +146,15 @@ export class ModelManager {
     const b = new THREE.Box3();
     for (const lm of this.models.values()) {
       if (!lm.visible) continue;
-      lm.holder.updateMatrixWorld(true);
-      b.union(lm.model.box);
+      b.union(this.boxOf(lm));
     }
     return b;
+  }
+
+  /** 1 モデルのシーン座標での範囲 */
+  boxOf(lm: LoadedModel): THREE.Box3 {
+    lm.holder.updateMatrixWorld(true);
+    return lm.model.box;
   }
 
   async setModelVisible(lm: LoadedModel, visible: boolean) {

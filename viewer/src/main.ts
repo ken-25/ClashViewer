@@ -11,6 +11,7 @@ import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
 import { $, showMessage } from "./ui/dom";
 import { IssuePanel } from "./ui/issuePanel";
+import { Navigator } from "./ui/navigator";
 import { renderDisplay, renderMeasures, renderProps, renderToolPanel, syncToolPanel, updatePcStats } from "./ui/viewPanels";
 
 async function main() {
@@ -34,6 +35,8 @@ async function main() {
     renderProps(app);
   });
   app.on("display", () => renderDisplay(app));
+  app.on("nav", () => renderDisplay(app));
+  new Navigator(app);
   app.on("diff", () => renderDiff(app));
   app.on("selection", () => renderProps(app));
   app.on("measures", () => renderMeasures(app));
@@ -63,6 +66,7 @@ async function main() {
   document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((b) =>
     b.addEventListener("click", () => {
       const mode = b.dataset.clip as ClipMode;
+      if (mode !== "none" && app.clipping.mode === "none") app.prepareClipExtent();
       if (mode === "section" && app.clipping.mode !== "section") {
         const c = app.clipping.extent.getCenter(new THREE.Vector3());
         app.clipping.section.position = app.clipping.section.axis === "z" ? c.z : c[app.clipping.section.axis];
@@ -71,7 +75,7 @@ async function main() {
     }),
   );
   document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) =>
-    b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.sceneBox())),
+    b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.viewBox())),
   );
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
