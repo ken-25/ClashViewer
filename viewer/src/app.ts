@@ -62,7 +62,8 @@ export class App {
     this.models = new ModelManager(this.viewer);
     this.picker = new Picker(this.viewer, this.models);
     // ホイールはカーソル下の物体（点群・モデル。切断で隠れた物は除く）へ寄る
-    this.viewer.zoomPick = async (x, y) => (await this.picker.pick(x, y))?.point ?? null;
+    // 回転もその物体を中心にする（何も無ければ画面の中心）
+    this.viewer.pickPoint = async (x, y) => (await this.picker.pick(x, y))?.point ?? null;
     this.clipping = new Clipping(this.viewer);
     this.clipEditor = new ClipBoxEditor(this.viewer, this.clipping);
     this.frame = new LocalFrame(this.viewer);
