@@ -21,7 +21,7 @@ import laspy
 import numpy as np
 
 from . import __version__, progress
-from .e57 import E57Reader
+from .e57 import E57FormatError, E57Reader, check_signature
 from .potree import run_potree
 
 HASH_BLOCK = 8 * 1024 * 1024
@@ -112,6 +112,13 @@ def cmd_e57(args: argparse.Namespace) -> int:
         if not p.is_file():
             progress.emit("error", message=f"入力ファイルがありません: {p}")
             return 2
+    # 数 GB のハッシュ計算より前に、E57 でないファイルを弾く
+    for p in inputs:
+        try:
+            check_signature(str(p))
+        except E57FormatError as e:
+            progress.emit("error", message=str(e), detail=f"signature check failed: {p}")
+            return 1
     potree_exe = Path(args.potree) if args.potree else Path(sys.executable).parent.parent / "PotreeConverter" / "PotreeConverter.exe"
     if not potree_exe.is_file():
         progress.emit("error", message=f"PotreeConverter が見つかりません: {potree_exe}")
@@ -207,6 +214,9 @@ def cmd_info(args: argparse.Namespace) -> int:
                 )
         progress.emit("result", kind="info", files=out)
         return 0
+    except E57FormatError as e:
+        progress.emit("error", message=str(e))
+        return 1
     except Exception as e:
         progress.emit("error", message=str(e), detail=traceback.format_exc())
         return 1
