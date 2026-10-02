@@ -1,6 +1,5 @@
 {
   "name": "clash-viewer",
-  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "干渉ビューアの画面（WebView2 上で動く）",

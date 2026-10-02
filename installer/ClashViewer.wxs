@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  干渉ビューアのインストーラー（ユーザーごと・管理者権限なし）。scripts/build.ps1 から wix build で作る。
+
+  - インストール先: %LocalAppData%\Programs\ClashViewer（dist/ の中身をそのまま入れる）
+  - ショートカット: スタートメニューとデスクトップに「干渉ビューア」
+  - 更新: 新しい MSI を実行すると前の版を外してから入れる（MajorUpgrade）。古い版での上書きは止める
+  - データ（%LocalAppData%\ClashViewer）はインストーラーの管理外。アンインストールしても消えない
+
+  変数（wix build -d で渡す）
+    Version  リポジトリ直下の VERSION（x.y.z）
+    DistDir  scripts/build.ps1 が作る配布一式（dist/）
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- UpgradeCode は製品の識別子。変えると「別の製品」になり、前の版が残って二重に入るので絶対に変えない -->
+  <Package Name="干渉ビューア"
+           Manufacturer="ClashViewer"
+           Version="$(var.Version)"
+           UpgradeCode="B37C7E3B-23D5-4B95-8214-709C39212537"
+           Scope="perUser"
+           Language="1041"
+           Codepage="932"
+           Compressed="yes">
+    <SummaryInformation Codepage="932" Description="干渉ビューア $(var.Version)" Manufacturer="ClashViewer" />
+
+    <!-- 同じ版の作り直しも上書きできるようにする（同じ版が 2 つ並ばないように） -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="新しい版の干渉ビューアがすでに入っています。古い版を入れる場合は、先にアンインストールしてください。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- 「アプリと機能」での変更・修復は使わない（入れ直せば済む） -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="ClashViewer" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="干渉ビューア">
+      <!-- 配布一式（干渉ビューア.exe・viewer/・tools/）をフォルダ構成ごと入れる -->
+      <Files Directory="INSTALLFOLDER" Include="$(var.DistDir)\**" />
+      <ComponentRef Id="Shortcuts" />
+    </Feature>
+
+    <!-- ユーザーごとのショートカットは HKCU の値を KeyPath にする（Windows Installer の決まり） -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="Shortcuts">
+        <Shortcut Id="StartMenuShortcut" Name="干渉ビューア" Description="点群と3Dモデルを重ねて干渉を確認する"
+                  Target="[INSTALLFOLDER]干渉ビューア.exe" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="干渉ビューア" Description="点群と3Dモデルを重ねて干渉を確認する"
+                  Target="[INSTALLFOLDER]干渉ビューア.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\ClashViewer" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      </Component>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+  </Package>
+</Wix>

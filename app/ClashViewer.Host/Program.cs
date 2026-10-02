@@ -3,8 +3,8 @@ namespace ClashViewer.Host;
 internal static class Program
 {
     /// <summary>
-    /// 引数（通常は不要。exe を置いたフォルダが共有フォルダのルートになる）
-    ///   --root &lt;dir&gt;        共有データ（config/・datasets/・events/・issues/）のルートを指定する。
+    /// 引数（通常は不要。データは %LocalAppData%\ClashViewer\data、または settings.json の dataRoot に置く）
+    ///   --root &lt;dir&gt;        データ（config/・datasets/・events/・issues/）のルートを指定する（開発・E2E 用）。
     ///                       viewer/・tools/ は常に exe の隣を使う
     ///   --dev               開発モード（開発者ツール、テスト用の操作を有効にする）
     ///   --debug-port &lt;n&gt;    WebView2 のリモートデバッグ（E2E テスト用）
@@ -12,7 +12,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        string root = AppContext.BaseDirectory;
+        string? root = null;
         bool dev = false;
         int? port = null;
         string? user = null;
@@ -36,8 +36,9 @@ internal static class Program
             }
         }
 
-        var paths = new AppPaths(AppContext.BaseDirectory, root);
-        Log.Init(paths.Logs);
+        // データフォルダの決定（settings.json の読込）より前にログを使えるようにする
+        Log.Init(Path.Combine(AppPaths.Local, "logs"));
+        var paths = new AppPaths(AppContext.BaseDirectory, AppPaths.ResolveRoot(root));
         Log.Info($"起動 app={paths.App} root={paths.Root} dev={dev} user={Environment.UserName}");
         ApplicationConfiguration.Initialize();
         if (!Directory.Exists(paths.Viewer))
@@ -47,11 +48,11 @@ internal static class Program
         }
         try
         {
-            paths.EnsureShared();
+            paths.EnsureFolders();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"共有フォルダに書き込めません。\n{ex.Message}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"データフォルダに書き込めません。\n{paths.Root}\n{ex.Message}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
         Application.Run(new MainForm(paths, dev, port, user));

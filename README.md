@@ -1,7 +1,7 @@
 # 干渉ビューア（ClashViewer）
 
 点群（E57）と3Dモデル（IFC）を1つの画面に重ね、干渉・近接を目視確認する軽量ビューア。
-共有フォルダ（Box Drive）に置いた `干渉ビューア.exe` をダブルクリックするだけで、誰でも同じデータを見られる。
+利用者は MSI をダブルクリックして入れる（ユーザーごと・管理者権限なし）。データは各 PC のローカルに置く。
 
 - 何を作るか・なぜその技術か: [要件定義.md](要件定義.md)
 - PoC で確認した動作・性能・残課題: [PoC結果.md](PoC結果.md)
@@ -20,11 +20,14 @@
 | `e2e/` | E2E テスト（実 exe を起動して WebView2 を操作） | Node + playwright-core |
 | `scripts/` | ビルド・配布スクリプト | PowerShell |
 | `third_party/` | 同梱外部バイナリ（PotreeConverter）。取得物のため未コミット | — |
-| `dist/` | 配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）。共有フォルダへ上書きコピーしてよいものだけ。未コミット | — |
-| `dev/share/` | 開発・E2E 用の共有データ（`config/`・`datasets/`・`events/`・`issues/`）。未コミット | — |
+| `installer/` | インストーラーの定義（MSI） | WiX Toolset 7 |
+| `VERSION` | 製品のバージョン（唯一の正。exe・変換エンジン・MSI はここから決まる） | — |
+| `dist/` | 配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）。MSI の中身。未コミット | — |
+| `release/` | インストーラー（`干渉ビューア-<版>.msi`）。未コミット | — |
+| `dev/share/` | 開発・E2E 用のデータ（`config/`・`datasets/`・`events/`・`issues/`）。未コミット | — |
 | `dev/screenshots/` | E2E のスクリーンショット。未コミット | — |
 
-共有フォルダ上のフォルダ構成は [要件定義.md 5章](要件定義.md) を参照。
+インストール先とデータの置き場所は [要件定義.md 5章](要件定義.md) を参照。
 
 ## 必要なもの
 
@@ -33,6 +36,7 @@
 | .NET 10 SDK | ビューア exe のビルド |
 | Node.js（18+） | 画面のビルド・E2E |
 | uv | 変換エンジンの依存管理・ビルド |
+| WiX Toolset 7（`dotnet tool install --global wix --version 7.0.0`） | MSI のビルド。初回は利用条件（OSMF EULA）の確認と `wix eula accept wix7` が要る |
 | WebView2 Runtime | 実行（Windows に導入済みが前提） |
 
 ## 初回セットアップ
@@ -50,23 +54,32 @@ uv sync --project converter        # 変換エンジンの依存
 
 ## ビルド・リリース
 
-配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）を `dist/` に作る。
+配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）を `dist/` に作り、それを入れた MSI を `release/` に作る。
 
 ```powershell
-scripts/build.ps1                  # dist/ を作り直す
-scripts/build.ps1 -SkipConverter   # 変換エンジンは前回のビルド（build/converter-dist）を使う
-scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（build/host）を使う
+scripts/build.ps1                  # dist/ を作り直し、release/干渉ビューア-<版>.msi を作る
+scripts/build.ps1 -SkipMsi         # dist/ だけ（開発・E2E 用）
+scripts/build.ps1 -SkipConverter   # 変換エンジンは前回のビルド（build/converter-dist）を使う（版が違えば作り直す）
+scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（build/host）を使う（版が違えば作り直す）
 ```
 
-`build.ps1` が行うこと: `dist/` を空にする → 画面を Vite でビルド → exe を `dotnet publish -c Release` → PotreeConverter と変換エンジン（PyInstaller onedir）を `tools/` に配置。
+`build.ps1` が行うこと: `VERSION` を検査 → `dist/` を空にする → 画面を Vite でビルド → exe を `dotnet publish -c Release` → PotreeConverter と変換エンジン（PyInstaller onedir）を `tools/` に配置 → `wix build` で MSI を作り `wix msi validate` で検査。
 `dist/` にはデータ（`config/`・`datasets/`・`events/`・`issues/`）を入れない。データのフォルダが見つかったら消さずに止まる。
+
+### バージョン
+
+`VERSION`（`x.y.z`）だけを書き換える。exe は csproj が直接読み、変換エンジンは開発時は `VERSION` を読み、exe 化するときは `build.ps1` が生成する `_version.py`（未コミット）を使う。MSI には `-d Version` で渡す。
+`viewer/package.json`・`converter/pyproject.toml` には製品のバージョンを書かない。
 
 ### リリース
 
-`dist/` の中身を共有フォルダへ手動で上書きコピーする。共有フォルダの `config/`・`datasets/`・`events/`・`issues/` は触らない（`dist/` に無いので上書きされない）。
-起動中の人がいると exe の置き換えが保留されるので、コピー後に再起動を案内する。
+`release/干渉ビューア-<版>.msi` を配る（Box に置いて各自がダウンロードし、ダブルクリック）。
 
-`viewer/assets/` の古いファイル（ファイル名にハッシュ付き）は共有フォルダに残るが、新しい `index.html` からは参照されないので害はない。気になるときは `viewer/` を消してからコピーする。
+- インストール先は `%LocalAppData%\Programs\ClashViewer`。スタートメニューとデスクトップに「干渉ビューア」ができる
+- 新しい版の MSI を実行すれば前の版と置き換わる。同じ版の作り直しも上書きできる。古い版は入らない（先にアンインストールが要る）
+- 起動中に更新すると、閉じるよう求められる
+- アンインストールしてもデータ（`%LocalAppData%\ClashViewer`）は残る
+- `installer/ClashViewer.wxs` の `UpgradeCode` は変えない（変えると別製品として二重に入る）
 
 ### 画面だけ作り直す（開発用の短縮）
 
@@ -98,17 +111,18 @@ npm --prefix e2e ci                # 初回だけ
 node e2e/smoke.mjs                             # Range・書込権限
 node e2e/import.mjs                            # 取込
 node e2e/features.mjs <最新版フォルダ> <前の版フォルダ>   # 全機能（2 人分・版またぎ）
-node e2e/perf.mjs <データセットのフォルダ>              # 性能（--root <共有フォルダ> を指定可）
+node e2e/perf.mjs <データセットのフォルダ>              # 性能（--root <データフォルダ> を指定可）
 ```
 
 ## 実行
 
 ```powershell
 scripts/run.ps1                              # dist/ の exe を dev/share のデータで起動（開発モード）
-scripts/run.ps1 -Root "<Box の共有フォルダ>"  # 手元のビルドで共有フォルダのデータを見る
+scripts/run.ps1 -Root "<データフォルダ>"       # 別のデータフォルダで起動
 ```
 
-`dist/干渉ビューア.exe` を直接ダブルクリックしない。exe の隣（`dist/`）にデータのフォルダが作られ、`dist/` が配布物だけでなくなる。
+`dist/干渉ビューア.exe` を直接ダブルクリックすると、インストール版と同じ `%LocalAppData%\ClashViewer\data` を使う。
 `--root` で変わるのはデータの場所だけで、`viewer/`・`tools/` は常に exe の隣のものを使う。
 
-利用者は共有フォルダ上の `干渉ビューア.exe` をダブルクリックする（exe の隣がデータのルートになる）。
+データフォルダの決まり方: `--root`（開発用）＞ `%LocalAppData%\ClashViewer\settings.json` の `dataRoot` ＞ 既定の `%LocalAppData%\ClashViewer\data`。
+C ドライブの空きが足りない PC では、`settings.json` に `{ "dataRoot": "D:\\ClashViewerData" }` のように書いて移す（今は画面からは変えられない）。

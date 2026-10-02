@@ -1,6 +1,7 @@
 [project]
 name = "clash-converter"
-version = "0.1.0"
+# 製品のバージョンはリポジトリ直下の VERSION（SSOT）。このパッケージ単体では配布しないので固定値にしておく
+version = "0.0.0"
 description = "干渉ビューアの変換エンジン（E57 → LAS → Potree 2.0）"
 readme = "README.md"
 requires-python = ">=3.12"

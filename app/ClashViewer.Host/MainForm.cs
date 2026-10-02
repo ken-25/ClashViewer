@@ -61,7 +61,7 @@ public sealed class MainForm : Form
             // （config/app.json の "highPerformanceGpu": false で無効にできる）
             if (ReadConfigBool("highPerformanceGpu", true)) args.Add("--force_high_performance_gpu");
             options.AdditionalBrowserArguments = string.Join(' ', args);
-            // プロファイルは PC ローカルに置く（既定の「exe の隣」だと共有フォルダに作られてしまう）
+            // プロファイルは %LocalAppData%\ClashViewer に置く（既定の「exe の隣」だとインストール先に書き込んでしまう）
             // 同じプロファイルを別の起動引数で同時に使えないため、開発用の別利用者はプロファイルを分ける
             var profile = _user == Environment.UserName ? _paths.WebViewData : $"{_paths.WebViewData}-{EventStore.SafeName(_user)}";
             var env = await CoreWebView2Environment.CreateAsync(null, profile, options);

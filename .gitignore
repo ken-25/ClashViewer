@@ -17,8 +17,13 @@ env/
 *.egg-info/
 .pytest_cache/
 
+# scripts/build.ps1 が VERSION から生成する（exe 化した変換エンジンのバージョン）
+converter/src/clash_converter/_version.py
+
 # PyInstaller / Nuitka のビルド成果物
 build/
+# インストーラー（scripts/build.ps1 -Msi の出力）
+release/
 # 配布一式（scripts/build.ps1 の出力。共有フォルダへ上書きコピーするものだけ）
 dist/
 # 開発・E2E 用の共有データとスクリーンショット
