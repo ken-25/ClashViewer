@@ -24,8 +24,36 @@ export interface AlignPick {
   cloudScene: THREE.Vector3[];
 }
 
+/** 位置の目印（画面端の矢印・小地図）に出すもの。box はシーン座標（原点は大きさ 0 の箱） */
+export interface NavTarget {
+  id: string;
+  kind: "cloud" | "model" | "frameOrigin" | "worldOrigin";
+  label: string;
+  box: THREE.Box3;
+}
+
+export interface NavSettings {
+  /** 画面外（または遠くて小さい）点群・モデルの方向を画面の端に出す */
+  markers: boolean;
+  /** 原点（世界座標の 0,0,0・原点設定の原点）も目印に入れる */
+  origins: boolean;
+  /** 平面の小地図 */
+  minimap: boolean;
+}
+
 const SELECT_COLOR = new THREE.Color(0x3399ff);
 const DIFF_COLORS = { added: new THREE.Color(0x3cc85a), changed: new THREE.Color(0xf2c01e), removed: new THREE.Color(0xe5534b) };
+
+function loadNavSettings(): NavSettings {
+  const def: NavSettings = { markers: true, origins: true, minimap: true };
+  try {
+    const s = JSON.parse(localStorage.getItem("nav") ?? "{}");
+    for (const k of Object.keys(def) as (keyof NavSettings)[]) if (typeof s?.[k] === "boolean") def[k] = s[k];
+  } catch {
+    // 壊れていたら既定値
+  }
+  return def;
+}
 
 /** 画面全体の状態と操作。各パネルはこれを参照して描く。 */
 export class App {
@@ -54,6 +82,7 @@ export class App {
   align: AlignPick = { model: [], cloud: [], modelScene: [], cloudScene: [] };
   alignPreview: THREE.Matrix4 | null = null;
   pointBudget = 3_000_000;
+  nav: NavSettings = loadNavSettings();
   private listeners = new Map<string, Set<() => void>>();
   private originStep = 0;
 
@@ -174,12 +203,8 @@ export class App {
       this.clipping.box.copy(extent);
       this.frame.restore(JSON.parse(localStorage.getItem(`frame:${m.site}`) ?? "null"), origin);
       this.viewer.fit(extent);
-      const gap = this.modelGap();
-      this.setHint(
-        gap !== null
-          ? `モデルが点群から約 ${gap >= 1000 ? `${(gap / 1000).toFixed(1)} km` : `${gap.toFixed(0)} m`} 離れています（座標が合っていません）。「3点合わせ」で合わせてください`
-          : "",
-      );
+      // 離れて見えない側（モデル・点群）は、画面端の目印と小地図で場所を示す
+      this.setHint("");
       this.diff = null;
       if (m.diff) {
         try {
@@ -215,9 +240,9 @@ export class App {
   }
 
   /**
-   * 視点合わせ・切断の基準にする範囲。
-   * 座標合わせ前で点群とモデルが遠く離れている（km 単位）と、両方を入れると点にしか見えないので、
-   * そのときは点群（現場）の範囲だけを使う。
+   * 開いた直後の視点・切断の基準にする範囲。
+   * 点群とモデルが遠く離れている（km 単位）と、両方を入れると点にしか見えないので、
+   * そのときは点群の範囲だけを使う（もう片方は目印・小地図から移動できる）。
    */
   sceneBox(): THREE.Box3 {
     const b = new THREE.Box3();
@@ -230,6 +255,67 @@ export class App {
     }
     if (b.isEmpty()) b.set(new THREE.Vector3(-10, -10, -2), new THREE.Vector3(10, 10, 10));
     return b;
+  }
+
+  /**
+   * 視点ボタン・切断の基準にする範囲。点群とモデルが遠く離れていれば、いま見ている側
+   * （注視点に近い方）だけ。モデルへ移動した後に「上から」を押して点群へ戻されないように。
+   */
+  viewBox(): THREE.Box3 {
+    const pcBox = this.pc && this.pc.group.visible ? this.pc.boxDisplay : null;
+    const modelBox = this.models.box();
+    if (pcBox && !modelBox.isEmpty() && this.modelGap(pcBox, modelBox) !== null) {
+      const t = this.viewer.controls.target;
+      return (pcBox.distanceToPoint(t) <= modelBox.distanceToPoint(t) ? pcBox : modelBox).clone();
+    }
+    return this.sceneBox();
+  }
+
+  /** 切断を始めるとき、いま見ている側の範囲を基準にする（離れた側の範囲のままだと全部消える） */
+  prepareClipExtent() {
+    const ext = this.viewBox();
+    if (ext.equals(this.clipping.extent)) return;
+    this.clipping.extent.copy(ext);
+    this.clipping.box.copy(ext);
+  }
+
+  /** 位置の目印に出すもの（表示中の点群・モデルと原点） */
+  navTargets(): NavTarget[] {
+    const m = this.current;
+    if (!m) return [];
+    const list: NavTarget[] = [];
+    if (this.pc && this.pc.group.visible && !this.pc.boxDisplay.isEmpty()) list.push({ id: "cloud", kind: "cloud", label: "点群", box: this.pc.boxDisplay });
+    for (const lm of this.models.models.values()) {
+      if (lm.role !== "current" || !lm.visible) continue;
+      const box = this.models.boxOf(lm);
+      if (!box.isEmpty()) list.push({ id: `model:${lm.key}`, kind: "model", label: lm.key, box });
+    }
+    if (this.nav.origins) {
+      if (this.frame.isSet) list.push({ id: "frame", kind: "frameOrigin", label: "原点", box: new THREE.Box3(this.frame.origin.clone(), this.frame.origin.clone()) });
+      const o = worldToScene(m, [0, 0, 0]);
+      list.push({ id: "world", kind: "worldOrigin", label: "世界原点", box: new THREE.Box3(o, o.clone()) });
+    }
+    return list;
+  }
+
+  /** 範囲へ移動する（見る向きは今のまま）。原点のような点は周り 20 m ほどを映す */
+  focusBox(box: THREE.Box3) {
+    if (box.isEmpty()) return;
+    const b = box.clone();
+    const size = b.getSize(new THREE.Vector3()).length();
+    if (size < 20) b.expandByScalar((20 - size) / 2);
+    const dir = this.viewer.camera.position.clone().sub(this.viewer.controls.target);
+    this.viewer.fit(b, dir.lengthSq() > 1e-12 ? dir : undefined);
+    // km 単位で飛ぶと、Fragments の表示更新（LOD・カリング）が 1 回では追いつかず、
+    // 操作するまでモデルが出ないことがある。少し後にも更新し直す
+    for (const ms of [300, 1000, 2500]) setTimeout(() => void this.models.update(true), ms);
+  }
+
+  setNav(patch: Partial<NavSettings>) {
+    Object.assign(this.nav, patch);
+    localStorage.setItem("nav", JSON.stringify(this.nav));
+    this.viewer.requestRender();
+    this.emit("nav");
   }
 
   /** 点群とモデルが「明らかに合っていない」ほど離れていれば、その距離（m）。近ければ null */

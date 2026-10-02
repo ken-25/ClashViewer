@@ -24,7 +24,9 @@ export function renderDisplay(app: App) {
       ? h(
           "div",
           { class: "layer" },
-          h("label", { class: "row" }, h("input", { type: "checkbox", checked: pc.group.visible, onchange: (e: Event) => { pc.group.visible = (e.target as HTMLInputElement).checked; app.viewer.requestRender(); } }), "表示"),
+          h("div", { class: "row" },
+            h("label", { class: "row grow" }, h("input", { type: "checkbox", checked: pc.group.visible, onchange: (e: Event) => { pc.group.visible = (e.target as HTMLInputElement).checked; app.viewer.requestRender(); } }), "表示"),
+            h("button", { title: "点群の全体が見える所へ移動（見る向きはそのまま）", onclick: () => app.focusBox(pc.boxDisplay) }, "移動")),
           h("div", { class: "row" }, h("label", null, "色"), h("select", { class: "grow", onchange: (e: Event) => app.setColorMode(Number((e.target as HTMLSelectElement).value)) },
             [[ColorMode.RGB, "RGB"], [ColorMode.Intensity, "強度"], [ColorMode.Height, "高さ"], [ColorMode.Solid, "単色"]].map(([v, l]) =>
               h("option", { value: String(v), selected: u!.uColorMode.value === v }, l as string)))),
@@ -48,7 +50,9 @@ export function renderDisplay(app: App) {
       h(
         "div",
         { class: "layer" },
-        h("label", { class: "row" }, h("input", { type: "checkbox", checked: lm.visible, onchange: async (e: Event) => { await app.models.setModelVisible(lm, (e.target as HTMLInputElement).checked); } }), h("b", null, lm.key)),
+        h("div", { class: "row" },
+          h("label", { class: "row grow" }, h("input", { type: "checkbox", checked: lm.visible, onchange: async (e: Event) => { await app.models.setModelVisible(lm, (e.target as HTMLInputElement).checked); } }), h("b", null, lm.key)),
+          h("button", { title: "このモデルの全体が見える所へ移動（見る向きはそのまま）", onclick: () => app.focusBox(app.models.boxOf(lm)) }, "移動")),
         h("div", { class: "row" }, h("label", null, "不透明度"), h("input", { type: "range", min: "0.1", max: "1", step: "0.05", value: String(lm.opacity), class: "grow", "aria-label": `${lm.key} の不透明度`,
           onchange: async (e: Event) => { await app.models.setModelOpacity(lm, Number((e.target as HTMLInputElement).value)); } })),
         h(
@@ -78,6 +82,14 @@ export function renderDisplay(app: App) {
         ),
       ),
     ),
+    h("h2", null, "位置の目印"),
+    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.markers, onchange: (e: Event) => app.setNav({ markers: (e.target as HTMLInputElement).checked }) }),
+      "画面外・遠くの点群やモデルの方向を画面の端に出す"),
+    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.origins, onchange: (e: Event) => app.setNav({ origins: (e.target as HTMLInputElement).checked }) }),
+      "原点（世界座標の 0,0,0・設定した原点）も出す"),
+    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.minimap, onchange: (e: Event) => app.setNav({ minimap: (e.target as HTMLInputElement).checked }) }),
+      "平面図（小地図）を出す"),
+    h("p", { class: "small muted" }, "目印・平面図の点群やモデルを押すと、そこへ移動します。平面図の何も無い所を押すと、その場所へ平行移動します。"),
   );
   updatePcStats(app);
 }
@@ -264,7 +276,7 @@ export function renderToolPanel(app: App) {
       h("div", { class: "small muted", id: "section-label" }),
       h("div", { class: "row" },
         h("button", { disabled: !app.lastPick, onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderToolPanel(app); } } }, "選択位置に合わせる"),
-        h("button", { onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.sceneBox()) }, "断面に正対"),
+        h("button", { onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.viewBox()) }, "断面に正対"),
       ),
     );
     updateSectionLabel(app);
@@ -301,7 +313,10 @@ function renderAlignPanel(app: App, el: HTMLElement) {
   mount(
     el,
     h("h3", null, "3点合わせ"),
-    h("p", { class: "small muted" }, "モデル上の点と、それに対応する点群上の点を交互に 3 組クリックします（柱の角・梁の端など、両方で同じ所が分かる点）。"),
+    h("p", { class: "small muted" }, "モデル上の点と、それに対応する点群上の点を交互に 3 組クリックします（柱の角・梁の端など、両方で同じ所が分かる点）。モデルを点群に重ねます。"),
+    h("div", { class: "row small" }, "移動",
+      h("button", { class: next?.startsWith("モデル") ? "active" : "", disabled: app.models.box().isEmpty(), onclick: () => app.focusBox(app.models.box()) }, "モデルへ"),
+      h("button", { class: next?.startsWith("点群") ? "active" : "", disabled: !app.pc, onclick: () => app.pc && app.focusBox(app.pc.boxDisplay) }, "点群へ")),
     h("ol", { class: "small" }, [0, 1, 2].map((i) => h("li", null, `モデル ${a.model[i] ? "✓" : "—"}　点群 ${a.cloud[i] ? "✓" : "—"}${result ? `　ずれ ${(result.errors[i] * 1000).toFixed(0)} mm` : ""}`))),
     h("label", { class: "row small" }, h("input", { type: "checkbox", checked: levelOnly, onchange: (e: Event) => { el.dataset.level = (e.target as HTMLInputElement).checked ? "1" : "0"; renderAlignPanel(app, el); } }), "水平を保つ（Z 軸回りの回転と移動だけ）"),
     result ? h("div", { class: "small" }, `残差（RMS）${(result.residual * 1000).toFixed(1)} mm`) : null,
