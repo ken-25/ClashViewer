@@ -163,7 +163,8 @@ export class Viewer3D {
     e.preventDefault();
     // 1 目盛りを 1 に揃える（ピクセル単位は 100、行単位は 3 が 1 目盛り）。タッチパッドは小数になる
     const unit = e.deltaMode === 0 ? 100 : e.deltaMode === 1 ? 3 : 1;
-    const steps = THREE.MathUtils.clamp(e.deltaY / unit, -5, 5);
+    // 奥へ回す（deltaY < 0）と寄る、手前へ回すと離れる
+    const steps = THREE.MathUtils.clamp(-e.deltaY / unit, -5, 5);
     if (steps === 0) return;
     this.zoomSteps += steps;
     this.zoomCursor = { x: e.clientX, y: e.clientY };
