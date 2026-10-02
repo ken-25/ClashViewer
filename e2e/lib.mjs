@@ -8,7 +8,7 @@ import { chromium } from "playwright-core";
 
 export const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 // アプリ一式（scripts/build.ps1 の出力）。データは置かない
-export const dist = join(repo, "dist");
+export const dist = process.env.CV_DIST ?? join(repo, "dist");
 // 開発・テスト用の共有データ（config/・datasets/・events/・issues/）。CV_SHARE で別の場所にも向けられる
 export const share = process.env.CV_SHARE ?? join(repo, "dev", "share");
 // E2E のスクリーンショットの保存先

@@ -8,8 +8,8 @@ export default defineConfig({
     target: "es2022",
     chunkSizeWarningLimit: 10000,
     sourcemap: false,
-    // PoC 中は不具合を追いやすいよう圧縮しない
-    minify: false,
+    // 配布サイズを抑えるため圧縮する（19 MB → 15 MB）
+    minify: true,
   },
   worker: { format: "es" },
 });
