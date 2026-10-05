@@ -1,8 +1,8 @@
 {
-  "name": "clash-viewer",
+  "name": "kasane-viewer",
   "private": true,
   "type": "module",
-  "description": "干渉ビューアの画面（WebView2 上で動く）",
+  "description": "Kasane の画面（WebView2 上で動く）",
   "scripts": {
     "assets": "node scripts/copy-assets.mjs",
     "build": "node scripts/copy-assets.mjs && vite build",

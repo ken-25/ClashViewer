@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.Web.WebView2.Core;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
 /// 画面（JS）との RPC。画面は {id, method, params} を postMessage し、{id, result} か {id, error} を受け取る。

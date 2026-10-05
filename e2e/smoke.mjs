@@ -6,10 +6,10 @@ import { launch, assert, share, shots } from "./lib.mjs";
 const app = await launch();
 const { page } = app;
 try {
-  const ctx = await page.evaluate(() => window.__cv.app.ctx);
+  const ctx = await page.evaluate(() => window.__kasane.app.ctx);
   assert(ctx.user && ctx.root, `コンテキスト取得 user=${ctx.user}`);
 
-  // 懸念2: Range。自前ハンドラ（cv.local/data）と仮想ホスト割り当て（raw.cv.local）を比べる
+  // 懸念2: Range。自前ハンドラ（kasane.local/data）と仮想ホスト割り当て（raw.kasane.local）を比べる
   mkdirSync(join(share, "config"), { recursive: true });
   const buf = Buffer.alloc(1 << 20);
   for (let i = 0; i < buf.length; i++) buf[i] = i & 0xff;
@@ -18,7 +18,7 @@ try {
     const out = {};
     for (const [name, url] of [
       ["自前ハンドラ", "/data/config/range-test.bin"],
-      ["仮想ホスト割り当て", "https://raw.cv.local/config/range-test.bin"],
+      ["仮想ホスト割り当て", "https://raw.kasane.local/config/range-test.bin"],
     ]) {
       try {
         const res = await fetch(url, { headers: { Range: "bytes=1000-1009" } });

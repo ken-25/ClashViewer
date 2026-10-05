@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
 /// 利用者が選んだ・ドロップしたローカルファイルの登録簿。

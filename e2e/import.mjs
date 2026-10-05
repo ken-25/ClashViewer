@@ -12,34 +12,34 @@ try {
   // 起動時に前回のデータセットを開くので、それが終わるのを待つ
   await page.waitForFunction(() => document.getElementById("loading").classList.contains("hidden"), null, { timeout: 120000 });
   await page.waitForTimeout(1000);
-  const before = await page.evaluate(() => window.__cv.app.current?.folder ?? null);
-  const reg = await page.evaluate((paths) => window.__cv.host.devRegisterPaths(paths), files.map((f) => resolve(f)));
+  const before = await page.evaluate(() => window.__kasane.app.current?.folder ?? null);
+  const reg = await page.evaluate((paths) => window.__kasane.host.devRegisterPaths(paths), files.map((f) => resolve(f)));
   assert(reg.length === files.length, `ファイル登録 ${reg.map((r) => r.name).join(", ")}`);
   const t0 = Date.now();
-  const done = page.evaluate((reg) => window.__cv.data.startImport(reg), reg);
+  const done = page.evaluate((reg) => window.__kasane.data.startImport(reg), reg);
   await page.waitForSelector("#dlg-import[open]");
   const radios = await page.$$('#dlg-import input[name="imp-mode"]');
   if (asVersion) {
     await radios[1].click();
-    // プロジェクト ID（CV_SITE）が指定されていればそれを、無ければ同じ名称のプロジェクトのうち版の多いものを選ぶ
+    // プロジェクト ID（KASANE_SITE）が指定されていればそれを、無ければ同じ名称のプロジェクトのうち版の多いものを選ぶ
     const value = await page.evaluate(
       ([n, site]) => {
         if (site) return site;
-        const sites = [...window.__cv.app.sites.entries()].filter(([, v]) => v[0].name === n).sort((a, b) => b[1].length - a[1].length);
+        const sites = [...window.__kasane.app.sites.entries()].filter(([, v]) => v[0].name === n).sort((a, b) => b[1].length - a[1].length);
         return sites[0]?.[0];
       },
-      [name, process.env.CV_SITE ?? ""],
+      [name, process.env.KASANE_SITE ?? ""],
     );
     if (!value) throw new Error(`プロジェクト ${name} がありません`);
     await page.selectOption("#dlg-import select", value);
-    // 前の版を明示する（CV_BASE=フォルダ名）。PoC の検証用で、画面からは常に最新版が前の版になる
-    if (process.env.CV_BASE) {
+    // 前の版を明示する（KASANE_BASE=フォルダ名）。PoC の検証用で、画面からは常に最新版が前の版になる
+    if (process.env.KASANE_BASE) {
       await page.evaluate((folder) => {
-        const app = window.__cv.app;
+        const app = window.__kasane.app;
         const m = app.datasets.find((d) => d.folder === folder);
         if (!m) throw new Error(`前の版がありません: ${folder}`);
         app.datasets = app.datasets.filter((d) => d.site !== m.site || d.version <= m.version);
-      }, process.env.CV_BASE);
+      }, process.env.KASANE_BASE);
       await page.selectOption("#dlg-import select", value);
     }
   } else {
@@ -66,11 +66,11 @@ try {
   clearInterval(timer);
   clearInterval(closer);
   const secs = (Date.now() - t0) / 1000;
-  const cur = await page.evaluate(() => window.__cv.app.current);
+  const cur = await page.evaluate(() => window.__kasane.app.current);
   assert(cur && cur.state === "ready" && cur.folder !== before, `取込完了 ${cur?.folder}（${secs.toFixed(1)} 秒）`);
   await page.waitForTimeout(4000);
   const stats = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     return {
       models: [...a.models.models.values()].map((m) => m.key),
       pc: a.pc ? { visible: a.pc.visiblePoints, nodes: a.pc.visibleNodes.length, total: a.pc.pointCount } : null,

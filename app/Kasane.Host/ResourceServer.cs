@@ -1,10 +1,10 @@
 using System.Text;
 using Microsoft.Web.WebView2.Core;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
-/// https://cv.local/ の応答を自前で返す。
+/// https://kasane.local/ の応答を自前で返す。
 ///
 /// - /            画面（viewer/）
 /// - /data/...    プロジェクトフォルダ（datasets/・issues/・events/）と設定データフォルダ（config/）。Range 要求に 206 で応える
@@ -16,7 +16,7 @@ namespace ClashViewer.Host;
 /// </summary>
 public sealed class ResourceServer
 {
-    public const string Host = "cv.local";
+    public const string Host = "kasane.local";
     public const string Origin = "https://" + Host;
 
     private static readonly string[] ReadablePrefixes = { "datasets/", "issues/", "config/", "events/" };

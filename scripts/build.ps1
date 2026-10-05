@@ -5,7 +5,7 @@
 .DESCRIPTION
   何を変えたかを気にせず、これ 1 本を実行すれば dist/ が最新になる（起動は scripts/run.ps1）。
   - 画面（viewer/）: 毎回 型チェック + Vite ビルド
-  - exe（app/ClashViewer.Host）: ソース・csproj・VERSION が前回より新しいときだけ dotnet publish
+  - exe（app/Kasane.Host）: ソース・csproj・VERSION が前回より新しいときだけ dotnet publish
   - 変換エンジン（converter/）: ソース・依存・VERSION が前回より新しいときだけ PyInstaller
   MSI まで作るのは scripts/release.ps1（全部作り直す）。
 
@@ -14,7 +14,7 @@
   dist/ にはデータ（config/・datasets/・events/・issues/）を入れない。開発・E2E のデータは dev/share に置く。
 
 .PARAMETER Release
-  リリース用。dist/ を空にし、すべてを作り直してから release/干渉ビューア-<版>.msi を作る。
+  リリース用。dist/ を空にし、すべてを作り直してから release/3D施工検討Viewer_Kasane_<版>.msi を作る。
   直接付けずに scripts/release.ps1 を使う。
 #>
 param(
@@ -67,31 +67,31 @@ try {
   if (-not (Test-Path node_modules)) { npm ci; if ($LASTEXITCODE -ne 0) { throw "npm ci に失敗" } }
   npm run typecheck --silent
   if ($LASTEXITCODE -ne 0) { throw "画面の型エラー" }
-  $env:CV_OUT_DIR = Join-Path $dist "viewer"
+  $env:KASANE_OUT_DIR = Join-Path $dist "viewer"
   npm run build --silent -- --logLevel warn
   if ($LASTEXITCODE -ne 0) { throw "画面のビルドに失敗" }
 } finally {
-  Remove-Item Env:CV_OUT_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:KASANE_OUT_DIR -ErrorAction SilentlyContinue
   Pop-Location
 }
 
 # ===== exe =====
-$hostSrc = Join-Path $repo "app\ClashViewer.Host"
+$hostSrc = Join-Path $repo "app\Kasane.Host"
 $pub = Join-Path $repo "build\host"
-$hostExe = Join-Path $pub "ClashViewer.exe"
+$hostExe = Join-Path $pub "Kasane.exe"
 $hostStale = $Release -or -not (Test-Path $hostExe) -or
   ((Get-Item $hostExe).VersionInfo.ProductVersion -split '\+')[0] -ne $version -or
   (Get-Newest @($hostSrc, $versionFile)) -gt (Get-Item $hostExe).LastWriteTimeUtc
 if ($hostStale) {
-  Write-Host "== exe (干渉ビューア.exe)"
-  dotnet publish (Join-Path $hostSrc "ClashViewer.Host.csproj") -c Release -o $pub --nologo -v quiet
+  Write-Host "== exe (Kasane.exe)"
+  dotnet publish (Join-Path $hostSrc "Kasane.Host.csproj") -c Release -o $pub --nologo -v quiet
   if ($LASTEXITCODE -ne 0) { throw "exe のビルドに失敗" }
   # 出力が変わらず日時が古いままだと毎回作り直しになるので、作った時刻にそろえる
   (Get-Item $hostExe).LastWriteTimeUtc = [DateTime]::UtcNow
 } else {
   Write-Host "== exe: 変更なし（前回のビルドを使う）"
 }
-Copy-Item $hostExe (Join-Path $dist "干渉ビューア.exe") -Force
+Copy-Item $hostExe (Join-Path $dist "Kasane.exe") -Force
 
 # ===== tools/PotreeConverter =====
 $pcSrc = Get-ChildItem (Join-Path $repo "third_party\PotreeConverter") -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -122,7 +122,7 @@ $convDst = Join-Path $dist "tools\converter"
 if ($convStale) {
   Write-Host "== 変換エンジン (tools/converter)"
   # exe 化すると VERSION ファイルを読めないので、版を埋め込んだモジュールを生成する（コミットしない）
-  $verPy = Join-Path $convDir "src\clash_converter\_version.py"
+  $verPy = Join-Path $convDir "src\kasane_converter\_version.py"
   Set-Content $verPy "# scripts/build.ps1 が VERSION から生成する。編集しない`nVERSION = `"$version`"`n" -Encoding utf8NoBOM
   Push-Location $convDir
   try {
@@ -166,12 +166,44 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 }
 $releaseDir = Join-Path $repo "release"
 New-Item -ItemType Directory -Force $releaseDir | Out-Null
-$msi = Join-Path $releaseDir "干渉ビューア-$version.msi"
+# ファイル名は表示名（製品名）と版。コマンドでの導入で引用符の付け忘れが起きないよう、空白は _ にする
+$msi = Join-Path $releaseDir "3D施工検討Viewer_Kasane_$version.msi"
 # ICE38/64/91 はユーザープロファイルへ入れる部品に「HKCU の値を KeyPath にする」「フォルダごとに RemoveFolder」を求める。
 # ローミングしないユーザーごとのインストールでは不要で、フォルダ丸ごとの取り込み（Files）とは両立しないので外す。
 # ICE61 は同じ版での上書き（AllowSameVersionUpgrades）を許したことへの警告
-wix build (Join-Path $repo "installer\ClashViewer.wxs") -nologo -arch x64 `
-  -d "Version=$version" -d "DistDir=$dist" -o $msi
+# 画面（UI）と完了後の起動（Util）の拡張。版は wix 本体と同じ 7.0.0 にそろえる
+$wixExts = "WixToolset.UI.wixext", "WixToolset.Util.wixext"
+$installedExts = (wix extension list -g) -join "`n"
+foreach ($ext in $wixExts) {
+  if ($installedExts -notmatch [regex]::Escape($ext)) {
+    throw "wix の拡張 $ext がありません（wix extension add -g $ext/7.0.0）"
+  }
+}
+
+# 利用規約は installer/license.txt（UTF-8 のプレーンテキスト）を正とし、インストーラー画面用の RTF をここで作る。
+# {VERSION} は VERSION の値に置き換える。日本語は \uN（符号付き 16 bit）で書くので RTF のコードページに依存しない
+$licenseTxt = Join-Path $repo "installer\license.txt"
+$licenseRtf = Join-Path $repo "build\license.rtf"
+$sb = [Text.StringBuilder]::new()
+[void]$sb.Append('{\rtf1\ansi\ansicpg932\deff0{\fonttbl{\f0\fnil\fcharset128 Meiryo UI;}}\viewkind4\uc1\pard\f0\fs18 ')
+$text = (Get-Content $licenseTxt -Raw -Encoding utf8).Replace("{VERSION}", $version) -replace "`r`n", "`n"
+foreach ($ch in $text.ToCharArray()) {
+  $c = [int]$ch
+  if ($ch -eq "`n") { [void]$sb.Append("\par`r`n") }
+  elseif ($ch -in '\', '{', '}') { [void]$sb.Append('\' + $ch) }
+  elseif ($c -lt 0x80) { [void]$sb.Append($ch) }
+  else { [void]$sb.Append('\u' + $(if ($c -gt 32767) { $c - 65536 } else { $c }) + '?') }
+}
+[void]$sb.Append('}')
+New-Item -ItemType Directory -Force (Split-Path $licenseRtf) | Out-Null
+Set-Content $licenseRtf $sb.ToString() -Encoding ascii -NoNewline
+
+$wixArgs = @("-d", "Version=$version", "-d", "DistDir=$dist", "-d", "LicenseRtf=$licenseRtf",
+  "-ext", "WixToolset.UI.wixext", "-ext", "WixToolset.Util.wixext", "-culture", "ja-JP")
+# アイコン（exe と同じ app.ico）があれば「アプリと機能」にも出す
+$appIcon = Join-Path $hostSrc "app.ico"
+if (Test-Path $appIcon) { $wixArgs += @("-d", "IconFile=$appIcon") }
+wix build (Join-Path $repo "installer\Kasane.wxs") -nologo -arch x64 @wixArgs -o $msi
 if ($LASTEXITCODE -ne 0) { throw "MSI のビルドに失敗" }
 wix msi validate $msi -nologo -sice ICE38 -sice ICE64 -sice ICE91 -sice ICE61
 if ($LASTEXITCODE -ne 0) { throw "MSI の検証に失敗" }

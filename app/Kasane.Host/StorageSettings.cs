@@ -1,10 +1,10 @@
 using System.Text.Json.Nodes;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
-/// %LocalAppData%\ClashViewer\settings.json の保存先の設定（PC・利用者ごと）。
-///   dataRoot   プロジェクトフォルダ。省略時は %LocalAppData%\ClashViewer\data
+/// %LocalAppData%\Kasane\settings.json の保存先の設定（PC・利用者ごと）。
+///   dataRoot   プロジェクトフォルダ。省略時は %LocalAppData%\Kasane\data
 ///   configRoot 設定データフォルダ。省略時はプロジェクトフォルダの config\
 /// ほかのキーは読み書きで消さない。値が既定と同じなら書かない（既定の場所が変わっても追従できるように）。
 /// </summary>
@@ -96,7 +96,7 @@ public static class FolderCheck
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(Environment.ExpandEnvironmentVariables(path)))
         {
             o["path"] = path;
-            errors.Add("フォルダをフルパス（例: D:\\ClashViewerData）で指定してください。");
+            errors.Add("フォルダをフルパス（例: D:\\KasaneData）で指定してください。");
             return o;
         }
         string full;
@@ -114,7 +114,7 @@ public static class FolderCheck
 
         // 置いてはいけない場所
         if (string.Equals(Path.GetPathRoot(full), full, StringComparison.OrdinalIgnoreCase))
-            errors.Add("ドライブの直下は選べません。フォルダを作って選んでください（例: D:\\ClashViewerData）。");
+            errors.Add("ドライブの直下は選べません。フォルダを作って選んでください（例: D:\\KasaneData）。");
         if (StorageSettings.IsUnder(full, paths.App))
             errors.Add("アプリのフォルダの中には置けません（更新・アンインストールで消えます）。");
         foreach (var (dir, label) in new[] { (paths.WebViewData, "画面のプロファイル"), (paths.Work, "変換の作業用"), (paths.Logs, "ログ") })
@@ -176,7 +176,7 @@ public static class FolderCheck
                 var looksLike = new[] { "datasets", "events", "issues" }.Any(s => Directory.Exists(Path.Combine(full, s)));
                 o["looksLikeProject"] = looksLike;
                 if (!looksLike && SafeAny(full))
-                    warnings.Add("干渉ビューア以外のファイルが入っているフォルダです。専用のフォルダを作って選ぶと整理しやすくなります。");
+                    warnings.Add("Kasane 以外のファイルが入っているフォルダです。専用のフォルダを作って選ぶと整理しやすくなります。");
             }
             else
             {
@@ -199,7 +199,7 @@ public static class FolderCheck
         try
         {
             Directory.CreateDirectory(full);
-            var f = Path.Combine(full, $".cv-write-test-{Guid.NewGuid():N}");
+            var f = Path.Combine(full, $".kasane-write-test-{Guid.NewGuid():N}");
             File.WriteAllText(f, "");
             File.Delete(f);
             return (true, "");

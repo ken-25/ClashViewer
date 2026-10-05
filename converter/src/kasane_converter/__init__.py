@@ -1,4 +1,4 @@
-"""干渉ビューアの変換エンジン。"""
+"""Kasane の変換エンジン。"""
 
 from pathlib import Path
 

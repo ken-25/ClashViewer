@@ -1,4 +1,4 @@
-// exe（WebView2 ホスト）との通信。RPC は postMessage、データの読み書きは https://cv.local/ への fetch。
+// exe（WebView2 ホスト）との通信。RPC は postMessage、データの読み書きは https://kasane.local/ への fetch。
 
 export interface LocalFile {
   token: string;
@@ -102,7 +102,7 @@ webview?.addEventListener("message", (e: MessageEvent) => {
 export const isHosted = !!webview;
 
 export function call<T = any>(method: string, params: Record<string, unknown> = {}, extra?: ArrayLike<unknown>): Promise<T> {
-  if (!webview) return Promise.reject(new Error("干渉ビューア.exe から開いてください"));
+  if (!webview) return Promise.reject(new Error("Kasane.exe から開いてください"));
   const id = nextId++;
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve, reject });

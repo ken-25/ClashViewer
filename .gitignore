@@ -18,7 +18,7 @@ env/
 .pytest_cache/
 
 # scripts/build.ps1 が VERSION から生成する（exe 化した変換エンジンのバージョン）
-converter/src/clash_converter/_version.py
+converter/src/kasane_converter/_version.py
 
 # PyInstaller / Nuitka のビルド成果物
 build/

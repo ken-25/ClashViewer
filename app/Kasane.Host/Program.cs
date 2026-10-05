@@ -1,4 +1,4 @@
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 internal static class Program
 {
@@ -44,7 +44,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (!Directory.Exists(paths.Viewer))
         {
-            MessageBox.Show($"画面のフォルダ（viewer）が見つかりません。\n{paths.Viewer}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"画面のフォルダ（viewer）が見つかりません。\n{paths.Viewer}", "3D施工検討Viewer Kasane", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
         try
@@ -59,13 +59,13 @@ internal static class Program
             var fromSettings = paths.RootSource == "settings" || paths.ConfigSource == "settings";
             if (!fromSettings)
             {
-                MessageBox.Show($"保存先に書き込めません。\n{paths.Root}\n{ex.Message}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"保存先に書き込めません。\n{paths.Root}\n{ex.Message}", "3D施工検討Viewer Kasane", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
             var answer = MessageBox.Show(
                 $"設定した保存先を使えません。\n\nプロジェクトフォルダ: {paths.Root}\n設定データフォルダ: {paths.Config}\n\n{ex.Message}\n\n" +
                 "今回だけ既定の保存先で起動しますか？\n（設定画面から保存先を選び直せます）",
-                "干渉ビューア", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                "3D施工検討Viewer Kasane", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (answer != DialogResult.Yes) return;
             paths = new AppPaths(AppContext.BaseDirectory, AppPaths.DefaultRoot, null, "fallback");
             try
@@ -74,7 +74,7 @@ internal static class Program
             }
             catch (Exception ex2)
             {
-                MessageBox.Show($"既定の保存先にも書き込めません。\n{paths.Root}\n{ex2.Message}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"既定の保存先にも書き込めません。\n{paths.Root}\n{ex2.Message}", "3D施工検討Viewer Kasane", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
         }

@@ -1,7 +1,7 @@
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 public sealed class MainForm : Form
 {
@@ -30,7 +30,12 @@ public sealed class MainForm : Form
         _server = new ResourceServer(paths, local, _imports);
         _bridge = new Bridge(paths, user, dev, local, _imports, new DatasetStore(paths), new EventStore(paths, user), this);
 
-        Text = "干渉ビューア";
+        Text = "3D施工検討Viewer Kasane";
+        // タイトルバー・タスクバーのアイコン（app.ico を同梱したときだけ。csproj 参照）
+        using (var ico = typeof(MainForm).Assembly.GetManifestResourceStream("Kasane.app.ico"))
+        {
+            if (ico != null) Icon = new Icon(ico);
+        }
         Width = 1600;
         Height = 960;
         StartPosition = FormStartPosition.CenterScreen;
@@ -64,7 +69,7 @@ public sealed class MainForm : Form
             // （config/app.json の "highPerformanceGpu": false で無効にできる）
             if (ReadConfigBool("highPerformanceGpu", true)) args.Add("--force_high_performance_gpu");
             options.AdditionalBrowserArguments = string.Join(' ', args);
-            // プロファイルは %LocalAppData%\ClashViewer に置く（既定の「exe の隣」だとインストール先に書き込んでしまう）
+            // プロファイルは %LocalAppData%\Kasane に置く（既定の「exe の隣」だとインストール先に書き込んでしまう）
             // 同じプロファイルを別の起動引数で同時に使えないため、開発用の別利用者はプロファイルを分ける
             var profile = _user == Environment.UserName ? _paths.WebViewData : $"{_paths.WebViewData}-{EventStore.SafeName(_user)}";
             var env = await CoreWebView2Environment.CreateAsync(null, profile, options);
@@ -76,7 +81,7 @@ public sealed class MainForm : Form
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.AreBrowserAcceleratorKeysEnabled = _dev;
             core.Settings.IsZoomControlEnabled = false;
-            // 外部へは出ない。cv.local 以外への移動は止める
+            // 外部へは出ない。kasane.local 以外への移動は止める
             core.NavigationStarting += (_, e) =>
             {
                 if (!e.Uri.StartsWith(ResourceServer.Origin, StringComparison.OrdinalIgnoreCase) && !e.Uri.StartsWith("about:", StringComparison.Ordinal))
@@ -89,23 +94,23 @@ public sealed class MainForm : Form
             if (_dev)
             {
                 // 懸念2の確認用: 仮想ホストのフォルダ割り当てが Range に応えるかを比べるため
-                core.SetVirtualHostNameToFolderMapping("raw.cv.local", _paths.Root, CoreWebView2HostResourceAccessKind.Allow);
+                core.SetVirtualHostNameToFolderMapping("raw.kasane.local", _paths.Root, CoreWebView2HostResourceAccessKind.Allow);
             }
             _server.Attach(core, env);
             _bridge.Attach(core);
             _bridge.EnsureMember();
-            Text = $"干渉ビューア — {_paths.Root}";
+            Text = $"3D施工検討Viewer Kasane — {_paths.Root}";
             core.Navigate($"{ResourceServer.Origin}/index.html");
         }
         catch (WebView2RuntimeNotFoundException)
         {
-            MessageBox.Show(this, "WebView2 ランタイムが見つかりません。情報システム担当に導入を依頼してください。", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "WebView2 ランタイムが見つかりません。情報システム担当に導入を依頼してください。", "3D施工検討Viewer Kasane", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
         catch (Exception ex)
         {
             Log.Error("起動に失敗", ex);
-            MessageBox.Show(this, $"起動に失敗しました。\n{ex.Message}", "干渉ビューア", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, $"起動に失敗しました。\n{ex.Message}", "3D施工検討Viewer Kasane", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
     }

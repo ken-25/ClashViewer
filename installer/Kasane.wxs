@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Kasane のインストーラー（ユーザーごと・管理者権限なし）。scripts/build.ps1 から wix build で作る。
+
+  - インストール先: %LocalAppData%\Programs\Kasane（dist/ の中身をそのまま入れる）
+  - ショートカット: スタートメニューとデスクトップに「3D施工検討Viewer Kasane」
+  - 更新: 新しい MSI を実行すると前の版を外してから入れる（MajorUpgrade）。古い版での上書きは止める
+  - データ（%LocalAppData%\Kasane）はインストーラーの管理外。アンインストールしても消えない
+  - 画面: 利用規約に同意 → インストール → 完了（「起動する」チェックは既定で ON）。/qn などサイレント導入では出ず、起動もしない
+
+  変数（wix build -d で渡す）
+    Version     リポジトリ直下の VERSION（x.y.z）
+    DistDir     scripts/build.ps1 が作る配布一式（dist/）
+    LicenseRtf  installer/license.txt から scripts/build.ps1 が生成する RTF
+    IconFile    app/Kasane.Host/app.ico（置いてあるときだけ渡す）
+
+  拡張: WixToolset.UI.wixext（画面）・WixToolset.Util.wixext（完了後の起動）。-culture ja-JP で日本語の画面になる
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- UpgradeCode は製品の識別子。変えると「別の製品」になり、前の版が残って二重に入るので絶対に変えない -->
+  <Package Name="3D施工検討Viewer Kasane"
+           Manufacturer="きんでん東関東支社"
+           Version="$(var.Version)"
+           UpgradeCode="B37C7E3B-23D5-4B95-8214-709C39212537"
+           Scope="perUser"
+           Language="1041"
+           Codepage="932"
+           Compressed="yes">
+    <SummaryInformation Codepage="932" Description="3D施工検討Viewer Kasane $(var.Version)" Manufacturer="きんでん東関東支社" />
+
+    <!-- 同じ版の作り直しも上書きできるようにする（同じ版が 2 つ並ばないように） -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="新しい版の 3D施工検討Viewer Kasane がすでに入っています。古い版を入れる場合は、先にアンインストールしてください。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- 「アプリと機能」での変更・修復は使わない（入れ直せば済む）。ARPNOMODIFY は WixUI_Minimal が立てる -->
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- 「アプリと機能」に出すアイコン。ショートカットは exe に埋め込んだアイコンがそのまま出る -->
+    <?ifdef IconFile ?>
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <?endif?>
+
+    <!-- ===== 画面 ===== -->
+    <!-- 最初の画面で利用規約を見せ、「同意する」にチェックするまでインストールできない -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+
+    <!-- 完了画面の「起動する」チェック。Value="1" で最初から ON -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="3D施工検討Viewer Kasane を起動する" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <!-- 起動先は INSTALLFOLDER が決まった後（CostFinalize の後）に組み立てる。起動はユーザーの権限で行う -->
+    <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]Kasane.exe" After="CostFinalize" Sequence="ui" />
+    <CustomAction Id="LaunchApplication" DllEntry="WixShellExec" Impersonate="yes"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
+
+    <UI>
+      <ui:WixUI Id="WixUI_Minimal" />
+      <!-- 新規・更新のインストール時だけ起動する（アンインストールの完了画面では動かさない） -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Kasane" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="3D施工検討Viewer Kasane">
+      <!-- 配布一式（Kasane.exe・viewer/・tools/）をフォルダ構成ごと入れる -->
+      <Files Directory="INSTALLFOLDER" Include="$(var.DistDir)\**" />
+      <ComponentRef Id="Shortcuts" />
+    </Feature>
+
+    <!-- ユーザーごとのショートカットは HKCU の値を KeyPath にする（Windows Installer の決まり） -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="Shortcuts">
+        <Shortcut Id="StartMenuShortcut" Name="3D施工検討Viewer Kasane" Description="点群と3Dモデルを重ねて施工を検討する"
+                  Target="[INSTALLFOLDER]Kasane.exe" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="3D施工検討Viewer Kasane" Description="点群と3Dモデルを重ねて施工を検討する"
+                  Target="[INSTALLFOLDER]Kasane.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Kasane" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      </Component>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+  </Package>
+</Wix>

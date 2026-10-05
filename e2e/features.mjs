@@ -15,14 +15,14 @@ let page = app1.page;
 // ---- ページ内の補助 ----
 const idle = async (ms = 600) => {
   await page.waitForFunction(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     return document.getElementById("loading").classList.contains("hidden") && !(a.pc?.isLoading) && !a.models.isBusy;
   }, null, { timeout: 120000 });
   await page.waitForTimeout(ms);
 };
 const open = async (folder) => {
   await page.evaluate(async (f) => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     await a.refreshDatasets();
     await a.openDataset(a.datasets.find((d) => d.folder === f));
   }, folder);
@@ -30,7 +30,7 @@ const open = async (folder) => {
 };
 const setCamera = (pos, target) =>
   page.evaluate(([p, t]) => {
-    const v = window.__cv.app.viewer;
+    const v = window.__kasane.app.viewer;
     v.camera.position.set(...p);
     v.controls.target.set(...t);
     v.controls.update();
@@ -44,7 +44,7 @@ const clickAt = async (fx, fy) => {
 };
 const lastPick = () =>
   page.evaluate(() => {
-    const p = window.__cv.app.lastPick;
+    const p = window.__kasane.app.lastPick;
     return p ? { point: p.point.toArray(), source: p.source, model: p.model?.lm.key ?? null } : null;
   });
 /** 画面の中で、モデルに当たる点を格子状に探す */
@@ -56,7 +56,7 @@ const findModelHits = async (n, region = [0.25, 0.75], opts = {}) => {
       const fx = region[0] + ((region[1] - region[0]) * i) / (steps - 1);
       const fy = region[0] + ((region[1] - region[0]) * j) / (steps - 1);
       const h = await page.evaluate(async ([fx, fy]) => {
-        const a = window.__cv.app;
+        const a = window.__kasane.app;
         const r = a.viewer.canvas.getBoundingClientRect();
         const p = await a.picker.pick(r.left + r.width * fx, r.top + r.height * fy, { models: true, cloud: false });
         if (!p) return null;
@@ -83,14 +83,14 @@ try {
   // ======== 3点合わせ ========
   // 繰り返し実行できるよう、合わせを IFC 座標のままに戻してから始める
   await page.evaluate(async (f) => {
-    const id = new window.__cv.THREE.Matrix4().toArray();
-    await window.__cv.host.updateAlignment(f, { method: "identity", matrix: id, note: "E2E の初期化" });
+    const id = new window.__kasane.THREE.Matrix4().toArray();
+    await window.__kasane.host.updateAlignment(f, { method: "identity", matrix: id, note: "E2E の初期化" });
   }, latest);
   await open(latest);
-  const m0 = await page.evaluate(() => ({ origin: window.__cv.app.current.origin, method: window.__cv.app.current.alignment.method, modelBox: window.__cv.app.models.box().toJSON?.() ?? null }));
+  const m0 = await page.evaluate(() => ({ origin: window.__kasane.app.current.origin, method: window.__kasane.app.current.alignment.method, modelBox: window.__kasane.app.models.box().toJSON?.() ?? null }));
   // モデル全体が見える視点（シーン座標）
   const mb = await page.evaluate(() => {
-    const b = window.__cv.app.models.box();
+    const b = window.__kasane.app.models.box();
     return { min: b.min.toArray(), max: b.max.toArray() };
   });
   const c = mb.min.map((v, i) => (v + mb.max[i]) / 2);
@@ -128,7 +128,7 @@ try {
       const p = await lastPick();
       if (p?.source === want) return p;
       const dbg = await page.evaluate(async () => {
-        const a = window.__cv.app;
+        const a = window.__kasane.app;
         const r = a.viewer.canvas.getBoundingClientRect();
         const any = await a.picker.pick(r.left + r.width / 2, r.top + r.height / 2, { models: true, cloud: true });
         return { tool: a.tool, align: [a.align.model.length, a.align.cloud.length], any: any && [any.source, ...any.point.toArray().map((x) => +x.toFixed(2))], cam: a.viewer.camera.position.toArray().map((x) => +x.toFixed(2)) };
@@ -168,7 +168,7 @@ try {
     pairErr.push(err);
   }
   const align = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     return { n: [a.align.model.length, a.align.cloud.length], preview: a.alignPreview?.toArray() ?? null, panel: document.getElementById("tool-opts").innerText };
   });
   assert(align.n[0] === 3 && align.n[1] === 3 && align.preview, "3 組の対応点から合わせ行列を計算");
@@ -191,19 +191,19 @@ try {
 
   // ======== 重ね表示の確認（合わせ後） ========
   const ov = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     const mb = a.models.box();
     const pb = a.pc.boxDisplay;
     return { inter: mb.intersectsBox(pb), mb: [mb.min.toArray(), mb.max.toArray()], pb: [pb.min.toArray(), pb.max.toArray()] };
   });
   assert(ov.inter, "合わせ後、モデルと点群の範囲が重なる");
-  await page.evaluate(() => window.__cv.app.viewer.fit(window.__cv.app.models.box()));
+  await page.evaluate(() => window.__kasane.app.viewer.fit(window.__kasane.app.models.box()));
   await idle(2000);
   await page.screenshot({ path: join(shots, "e2e-overlay.png") });
 
   // ======== 計測（点群・モデルの混在） ========
   const mb2 = await page.evaluate(() => {
-    const b = window.__cv.app.models.box();
+    const b = window.__kasane.app.models.box();
     return { min: b.min.toArray(), max: b.max.toArray() };
   });
   const c2 = mb2.min.map((v, i) => (v + mb2.max[i]) / 2);
@@ -211,13 +211,13 @@ try {
   await idle(1500);
   const mp = await findModelHits(3);
   await tool("measure");
-  await page.evaluate(() => window.__cv.app.setMeasureKind("distance"));
+  await page.evaluate(() => window.__kasane.app.setMeasureKind("distance"));
   await clickAt(mp[0].fx, mp[0].fy);
   const a1 = await lastPick();
   await clickAt(mp[1].fx, mp[1].fy);
   const a2 = await lastPick();
   const m1 = await page.evaluate(() => {
-    const l = window.__cv.app.measure.list;
+    const l = window.__kasane.app.measure.list;
     const m = l[l.length - 1];
     return { n: l.length, d: m.distance, axis: m.segments[0].axis, b: m.b.toArray(), src: m.sources, panel: document.getElementById("measures").innerText };
   });
@@ -229,7 +229,7 @@ try {
   // 「表示」タブのモデルの表示切替と同じ操作でモデルを隠し、点群の点を拾う
   const setModelsVisible = (on) =>
     page.evaluate(async (on) => {
-      const a = window.__cv.app;
+      const a = window.__kasane.app;
       for (const lm of a.models.models.values()) await a.models.setModelVisible(lm, on);
     }, on);
   await setModelsVisible(false);
@@ -243,9 +243,9 @@ try {
   await setModelsVisible(true);
   await idle(500);
   await clickAt(mp[2].fx, mp[2].fy);
-  const mixed = await page.evaluate(() => window.__cv.app.measure.list.at(-1)?.sources ?? null);
+  const mixed = await page.evaluate(() => window.__kasane.app.measure.list.at(-1)?.sources ?? null);
   assert(cp1?.source === "cloud" && mixed?.[0] === "点群" && mixed?.[1] === "モデル", "点群→モデルをまたいで計測");
-  results.measure = { modelToModel: +m1.d.toFixed(3), mixed: await page.evaluate(() => +window.__cv.app.measure.list.at(-1).distance.toFixed(3)) };
+  results.measure = { modelToModel: +m1.d.toFixed(3), mixed: await page.evaluate(() => +window.__kasane.app.measure.list.at(-1).distance.toFixed(3)) };
   console.log("  ", JSON.stringify(results.measure));
 
   // ======== 原点設定と直交計測 ========
@@ -255,7 +255,7 @@ try {
   const o = await lastPick();
   await clickAt(mp[1].fx, mp[1].fy);
   const frame = await page.evaluate(() => {
-    const f = window.__cv.app.frame;
+    const f = window.__kasane.app.frame;
     return { set: f.isSet, origin: f.origin.toArray(), x: f.xAxis.toArray() };
   });
   assert(frame.set && Math.hypot(...frame.origin.map((v, i) => v - o.point[i])) < 1e-9 && Math.abs(frame.x[2]) < 1e-12, "原点と X 軸（水平）を設定");
@@ -266,14 +266,14 @@ try {
   await clickAt(mp[2].fx, mp[2].fy);
   await page.keyboard.up("Shift");
   const om = await page.evaluate(() => {
-    const m = window.__cv.app.measure.list.at(-1);
+    const m = window.__kasane.app.measure.list.at(-1);
     return { axis: m.ortho, d: m.distance, comps: m.components.toArray() };
   });
   const big = om.comps.map(Math.abs);
   const nonAxis = big.filter((_, i) => i !== { x: 0, y: 1, z: 2 }[om.axis]);
   assert(om.axis && Math.abs(Math.max(...big) - om.d) < 1e-9 && nonAxis.every((v) => v < 1e-9), `直交計測 ${om.axis.toUpperCase()} 方向 ${om.d.toFixed(3)} m（他の成分 0）`);
   // 折れ線: Z 固定の区間＋自由な区間、Enter で確定（区間ごとの長さと合計）
-  await page.evaluate(() => window.__cv.app.setMeasureKind("polyline"));
+  await page.evaluate(() => window.__kasane.app.setMeasureKind("polyline"));
   await clickAt(mp[0].fx, mp[0].fy);
   await page.keyboard.press("z");
   await clickAt(mp[1].fx, mp[1].fy);
@@ -281,11 +281,11 @@ try {
   await clickAt(mp[2].fx, mp[2].fy);
   await page.keyboard.press("Enter");
   const pl = await page.evaluate(() => {
-    const m = window.__cv.app.measure.list.at(-1);
+    const m = window.__kasane.app.measure.list.at(-1);
     return { kind: m.kind, n: m.segments.length, axis0: m.segments[0].axis, c0: m.segments[0].components.toArray(), sum: m.segments.reduce((s, x) => s + x.length, 0), total: m.total };
   });
   assert(pl.kind === "polyline" && pl.n === 2 && pl.axis0 === "z" && Math.abs(pl.c0[0]) < 1e-9 && Math.abs(pl.c0[1]) < 1e-9 && Math.abs(pl.sum - pl.total) < 1e-9, `折れ線 2 区間（1 区間目 Z）計 ${pl.total.toFixed(3)} m`);
-  await page.evaluate(() => window.__cv.app.setMeasureKind("distance"));
+  await page.evaluate(() => window.__kasane.app.setMeasureKind("distance"));
   // 局所座標の表示（原点で 0）
   const coordText = await page.locator("#st-coord").innerText();
   results.ortho = om;
@@ -295,7 +295,7 @@ try {
   await tool("select");
   // 選択モードではピンのクリックで指摘が開くので、前回までの指摘（mp[1] に登録）の無い位置を選ぶ
   await clickAt(mp[0].fx, mp[0].fy);
-  await page.waitForFunction(() => !!window.__cv.app.selection);
+  await page.waitForFunction(() => !!window.__kasane.app.selection);
   const props = await page.locator("#props").innerText();
   assert(props.includes("GlobalId") && props.includes("IFC クラス"), "要素の属性（GlobalId・クラス・Pset）を表示");
   results.props = props.split("\n").slice(0, 8).join(" | ");
@@ -304,12 +304,12 @@ try {
   await page.click('#btn-clip');
   await page.click('[data-clip="box"]');
   await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     a.clipping.boxAround(a.lastPick.point, 1.5);
   });
   await idle(1500);
   const clip = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     const planes = a.viewer.renderer.clippingPlanes.length;
     // 箱の外の点は拾わない
     const r = a.viewer.canvas.getBoundingClientRect();
@@ -322,8 +322,8 @@ try {
   await page.screenshot({ path: join(shots, "e2e-clipbox.png") });
   await page.click('#btn-clip');
   await page.click('[data-clip="section"]');
-  await page.evaluate(() => window.__cv.app.clipping.setSection({ axis: "z", thickness: 0.3 }));
-  const sec = await page.evaluate(() => window.__cv.app.viewer.renderer.clippingPlanes.length);
+  await page.evaluate(() => window.__kasane.app.clipping.setSection({ axis: "z", thickness: 0.3 }));
+  const sec = await page.evaluate(() => window.__kasane.app.viewer.renderer.clippingPlanes.length);
   await page.click('#btn-view');
   await page.click('[data-view="top"]');
   await idle(1500);
@@ -343,9 +343,9 @@ try {
   await page.fill('#dlg-issue input[type="text"]', "E2E: 柱と配管の干渉");
   await page.fill("#dlg-issue textarea", "E2E テストで登録");
   await page.click("#dlg-issue button.primary");
-  await page.waitForFunction(() => window.__cv.app.issues.size > 0);
+  await page.waitForFunction(() => window.__kasane.app.issues.size > 0);
   const issue = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     const i = [...a.issues.values()].at(-1);
     return { id: i.id, cam: i.view.camera, shot: i.screenshots[0], status: i.status, pins: document.querySelectorAll(".issue-pin").length };
   });
@@ -355,7 +355,7 @@ try {
   await page.click(".issue-item");
   await page.waitForTimeout(800);
   const back = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     const o = a.current.origin;
     return a.viewer.camera.position.toArray().map((v, i) => v + o[i]);
   });
@@ -366,7 +366,7 @@ try {
   await page.click('[data-tab="diff"]');
   const diffText = await page.locator("#tab-diff").innerText();
   await page.click('#tab-diff input[type="checkbox"]');
-  await page.waitForFunction(() => window.__cv.app.diffShown && [...window.__cv.app.models.models.values()].some((m) => m.role === "previous"), null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__kasane.app.diffShown && [...window.__kasane.app.models.models.values()].some((m) => m.role === "previous"), null, { timeout: 60000 });
   await idle(1500);
   // 変更された柱へ寄る
   await page.click("#tab-diff details[open] .diff-list div");
@@ -384,15 +384,15 @@ try {
 const app2 = await launch({ user: "e2e-tanaka" });
 page = app2.page;
 try {
-  await page.waitForFunction(() => window.__cv.app.issues.size > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.__kasane.app.issues.size > 0, null, { timeout: 30000 });
   await page.evaluate(async (f) => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     await a.refreshDatasets();
     await a.openDataset(a.datasets.find((d) => d.folder === f));
   }, previous);
   await page.waitForTimeout(2000);
   const seen = await page.evaluate(() => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     const i = [...a.issues.values()].at(-1);
     return { id: i.id, by: i.createdBy, pinsOther: document.querySelectorAll(".issue-pin.other-version").length, version: a.current.version };
   });
@@ -400,7 +400,7 @@ try {
   await page.click('[data-tab="issues"]');
   await page.click(".issue-item");
   await page.selectOption("#tab-issues .issue-detail select >> nth=0", "対応中");
-  await page.waitForFunction(() => [...window.__cv.app.issues.values()].at(-1).status === "対応中");
+  await page.waitForFunction(() => [...window.__kasane.app.issues.values()].at(-1).status === "対応中");
   const files = readdirSync(join(share, "events"));
   assert(files.includes("e2e-tanaka.jsonl") && files.includes("e2e-sato.jsonl"), "状態変更は自分のファイル（events/e2e-tanaka.jsonl）にだけ追記");
   await page.screenshot({ path: join(shots, "e2e-issue-other.png") });

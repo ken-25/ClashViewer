@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-  開発用に dist/干渉ビューア.exe を起動する。データは dev/share（既定）を使い、dist/ には何も書かない。
+  開発用に dist/Kasane.exe を起動する。データは dev/share（既定）を使い、dist/ には何も書かない。
 
 .PARAMETER Root
-  データのルート（既定: dev/share）。インストール版のデータを見るなら $env:LOCALAPPDATA\ClashViewer\data を指定する。
+  データのルート（既定: dev/share）。インストール版のデータを見るなら $env:LOCALAPPDATA\Kasane\data を指定する。
 .PARAMETER NoDev
   開発モード（開発者ツール等）を付けずに起動する。
 #>
@@ -12,8 +12,8 @@ param(
   [switch]$NoDev
 )
 $ErrorActionPreference = "Stop"
-$exe = Join-Path $PSScriptRoot "..\dist\干渉ビューア.exe"
-if (-not (Test-Path $exe)) { throw "dist/干渉ビューア.exe がありません（scripts/build.ps1 を実行）" }
+$exe = Join-Path $PSScriptRoot "..\dist\Kasane.exe"
+if (-not (Test-Path $exe)) { throw "dist/Kasane.exe がありません（scripts/build.ps1 を実行）" }
 New-Item -ItemType Directory -Force $Root | Out-Null
 # Start-Process は配列を空白でつなぐだけなので、空白を含むパスは自分で囲む
 $args_ = @("--root", ('"{0}"' -f (Resolve-Path $Root).Path))

@@ -18,7 +18,7 @@ import { renderLayers, renderMeasureList, renderNavMenu, renderRight, renderTool
 
 async function main() {
   if (!isHosted) {
-    document.body.textContent = "干渉ビューア.exe から開いてください。";
+    document.body.textContent = "Kasane.exe から開いてください。";
     return;
   }
   const app = new App();
@@ -309,7 +309,7 @@ async function main() {
   if (start) await app.openDataset(start).catch((e) => showMessage("開けません", String(e)));
 
   // E2E テスト・計測用（開発モードのみ）
-  if (app.ctx.dev) (window as any).__cv = { app, host, data, issues, settings, THREE, attributeSignature, solveRigid };
+  if (app.ctx.dev) (window as any).__kasane = { app, host, data, issues, settings, THREE, attributeSignature, solveRigid };
 }
 
 main().catch((e) => {

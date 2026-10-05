@@ -1,8 +1,8 @@
 [project]
-name = "clash-converter"
+name = "kasane-converter"
 # 製品のバージョンはリポジトリ直下の VERSION（SSOT）。このパッケージ単体では配布しないので固定値にしておく
 version = "0.0.0"
-description = "干渉ビューアの変換エンジン（E57 → LAS → Potree 2.0）"
+description = "Kasane の変換エンジン（E57 → LAS → Potree 2.0）"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-clash-converter = "clash_converter.cli:main"
+kasane-converter = "kasane_converter.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.23,<0.12.0"]

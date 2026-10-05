@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>datasets/ の一覧と manifest の更新。</summary>
 public sealed class DatasetStore

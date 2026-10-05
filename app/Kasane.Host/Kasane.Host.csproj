@@ -5,9 +5,9 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>ClashViewer.Host</RootNamespace>
-    <AssemblyName>ClashViewer</AssemblyName>
-    <Product>干渉ビューア</Product>
+    <RootNamespace>Kasane.Host</RootNamespace>
+    <AssemblyName>Kasane</AssemblyName>
+    <Product>3D施工検討Viewer Kasane</Product>
     <!-- バージョンはリポジトリ直下の VERSION が唯一の正（SSOT）。ここに数字を書かない -->
     <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
@@ -24,6 +24,13 @@
     <!-- WebView2 パッケージが WPF 版も参照するための警告（WinForms 版だけを使う） -->
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
+  <!-- アプリのアイコン（app.ico）。置いてあれば exe とウィンドウに使う。無ければ既定のアイコンのまま -->
+  <PropertyGroup Condition="Exists('app.ico')">
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('app.ico')">
+    <EmbeddedResource Include="app.ico" LogicalName="Kasane.app.ico" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>

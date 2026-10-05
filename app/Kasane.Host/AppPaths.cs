@@ -1,11 +1,11 @@
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
 /// アプリ一式・プロジェクトフォルダ・設定データフォルダ・ローカル作業領域のパス。
-/// アプリは MSI でユーザーごとに入れる（%LocalAppData%\Programs\ClashViewer、読み取り専用として扱う）。
+/// アプリは MSI でユーザーごとに入れる（%LocalAppData%\Programs\Kasane、読み取り専用として扱う）。
 /// データは PC ごとのローカルに置く。
 ///
-/// - プロジェクトフォルダ（Root）: datasets/・events/・issues/。既定は %LocalAppData%\ClashViewer\data
+/// - プロジェクトフォルダ（Root）: datasets/・events/・issues/。既定は %LocalAppData%\Kasane\data
 /// - 設定データフォルダ（Config）: app.json・members/。既定はプロジェクトフォルダの config\
 ///
 /// どちらも settings.json（設定画面から保存）か、開発用の --root で変えられる。
@@ -33,7 +33,7 @@ public sealed class AppPaths
 
     /// <summary>PC ごとのローカル領域（WebView2 のプロファイル・変換の作業用・ログ・設定）。アンインストールしても消さない。</summary>
     public static string Local { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClashViewer");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kasane");
     public static string DefaultRoot => Path.Combine(Local, "data");
     /// <summary>設定データフォルダの既定（プロジェクトフォルダの config\）。</summary>
     public static string DefaultConfigFor(string root) => Path.Combine(Normalize(root), "config");

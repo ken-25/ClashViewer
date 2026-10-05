@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
 /// events/&lt;ユーザー&gt;.jsonl。各自が自分のファイルにだけ追記し、全員分を読んで重ねる。

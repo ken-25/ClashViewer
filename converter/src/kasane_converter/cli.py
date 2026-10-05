@@ -124,7 +124,7 @@ def cmd_e57(args: argparse.Namespace) -> int:
         progress.emit("error", message=f"PotreeConverter が見つかりません: {potree_exe}")
         return 2
     out_dir = Path(args.out)
-    work_root = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="clashconv_"))
+    work_root = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="kasaneconv_"))
     work_root.mkdir(parents=True, exist_ok=True)
     t_start = time.monotonic()
     try:

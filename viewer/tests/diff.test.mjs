@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 let diff, align, THREE, issues;
-const out = mkdtempSync(join(tmpdir(), "cv-test-"));
+const out = mkdtempSync(join(tmpdir(), "kasane-test-"));
 
 before(async () => {
   await build({

@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
 /// <summary>
 /// 取込の流れを受け持つ。
@@ -238,7 +238,7 @@ public sealed class ImportService
 
     /// <summary>
     /// 変換エンジンの場所。配布時は tools/converter/converter.exe。
-    /// 開発時は config/app.json の converterCommand（例: ["uv","run","--project","...","clash-converter"]）を使う。
+    /// 開発時は config/app.json の converterCommand（例: ["uv","run","--project","...","kasane-converter"]）を使う。
     /// </summary>
     private (string exe, string[] prefix) ResolveConverter()
     {

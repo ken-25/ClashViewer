@@ -1,6 +1,6 @@
-namespace ClashViewer.Host;
+namespace Kasane.Host;
 
-/// <summary>PC ローカルのログ（%LOCALAPPDATA%\ClashViewer\logs）。</summary>
+/// <summary>PC ローカルのログ（%LOCALAPPDATA%\Kasane\logs）。</summary>
 public static class Log
 {
     private static readonly object Gate = new();

@@ -1,6 +1,7 @@
-# 干渉ビューア（ClashViewer）
+# 3D施工検討Viewer Kasane
 
-点群（E57）と3Dモデル（IFC）を1つの画面に重ね、干渉・近接を目視確認する軽量ビューア。
+点群（E57）と3Dモデル（IFC）を1つの画面に重ねて表示し、干渉・搬入計画などの施工検討を行う軽量ビューア。
+コードネーム・英字 ID は `Kasane`（exe・フォルダ・名前空間・パッケージ名に使う）。
 利用者は MSI をダブルクリックして入れる（ユーザーごと・管理者権限なし）。データは各 PC のローカルに置く。
 
 - 何を作るか・なぜその技術か: [要件定義.md](要件定義.md)
@@ -14,7 +15,7 @@
 
 | 場所 | 役割 | 技術 |
 |---|---|---|
-| `app/ClashViewer.Host` | ビューア exe（WebView2 ホスト） | C# / .NET 10 / WinForms |
+| `app/Kasane.Host` | ビューア exe（WebView2 ホスト） | C# / .NET 10 / WinForms |
 | `viewer/` | 画面（HTML/JS/CSS） | three.js / Fragments / web-ifc + Vite |
 | `converter/` | 変換エンジン（E57 → LAS → Potree 2.0） | Python（uv 管理）/ PyInstaller |
 | `e2e/` | E2E テスト（実 exe を起動して WebView2 を操作） | Node + playwright-core |
@@ -22,8 +23,8 @@
 | `third_party/` | 同梱外部バイナリ（PotreeConverter）。取得物のため未コミット | — |
 | `installer/` | インストーラーの定義（MSI） | WiX Toolset 7 |
 | `VERSION` | 製品のバージョン（唯一の正。exe・変換エンジン・MSI はここから決まる） | — |
-| `dist/` | 配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）。MSI の中身。未コミット | — |
-| `release/` | インストーラー（`干渉ビューア-<版>.msi`）。未コミット | — |
+| `dist/` | 配布一式（`Kasane.exe`・`viewer/`・`tools/`）。MSI の中身。未コミット | — |
+| `release/` | インストーラー（`3D施工検討Viewer_Kasane_<版>.msi`）。未コミット | — |
 | `dev/share/` | 開発・E2E 用のデータ（`config/`・`datasets/`・`events/`・`issues/`）。未コミット | — |
 | `dev/screenshots/` | E2E のスクリーンショット。未コミット | — |
 
@@ -36,7 +37,7 @@
 | .NET 10 SDK | ビューア exe のビルド |
 | Node.js（18+） | 画面のビルド・E2E |
 | uv | 変換エンジンの依存管理・ビルド |
-| WiX Toolset 7（`dotnet tool install --global wix --version 7.0.0`） | MSI のビルド。初回は利用条件（OSMF EULA）の確認と `wix eula accept wix7` が要る |
+| WiX Toolset 7（`dotnet tool install --global wix --version 7.0.0`） | MSI のビルド。初回は利用条件（OSMF EULA）の確認と `wix eula accept wix7` が要る。拡張も入れる: `wix extension add -g WixToolset.UI.wixext/7.0.0` と `wix extension add -g WixToolset.Util.wixext/7.0.0`（インストール画面・完了後の起動） |
 | WebView2 Runtime | 実行（Windows に導入済みが前提） |
 
 ## 初回セットアップ
@@ -64,7 +65,7 @@ scripts/build.ps1
 # 2. dist/ の exe を開発モードで起動（データは dev/share）
 scripts/run.ps1
 
-# 3. 全部作り直して release/干渉ビューア-<版>.msi を作る
+# 3. 全部作り直して release/3D施工検討Viewer_Kasane_<版>.msi を作る
 scripts/release.ps1
 
 ```
@@ -81,34 +82,35 @@ scripts/release.ps1
 
 ### リリース
 
-`release/干渉ビューア-<版>.msi` を配る（Box に置いて各自がダウンロードし、ダブルクリック）。
+`release/3D施工検討Viewer_Kasane_<版>.msi` を配る（Box に置いて各自がダウンロードし、ダブルクリック）。
 
-- インストール先は `%LocalAppData%\Programs\ClashViewer`。スタートメニューとデスクトップに「干渉ビューア」ができる
+- インストール先は `%LocalAppData%\Programs\Kasane`。スタートメニューとデスクトップに「3D施工検討Viewer Kasane」ができる
 - 新しい版の MSI を実行すれば前の版と置き換わる。同じ版の作り直しも上書きできる。古い版は入らない（先にアンインストールが要る）
 - 起動中に更新すると、閉じるよう求められる
-- アンインストールしてもデータ（`%LocalAppData%\ClashViewer`）は残る
-- `installer/ClashViewer.wxs` の `UpgradeCode` は変えない（変えると別製品として二重に入る）
+- アンインストールしてもデータ（`%LocalAppData%\Kasane`）は残る
+- アプリのアイコンは `app/Kasane.Host/app.ico`。置けば exe・ウィンドウ・ショートカット・「アプリと機能」に使われる（無ければ既定のアイコン）
+- `installer/Kasane.wxs` の `UpgradeCode` は変えない（変えると別製品として二重に入る）
 
 ## 個別のコマンド
 
 普段は上の 3 つで足りる。部分的に回したいときだけ使う。
-Vite の出力先は環境変数 `CV_OUT_DIR`（未指定なら `viewer/dist`）。`scripts/build.ps1` は `dist/viewer` を指定して呼ぶ。
+Vite の出力先は環境変数 `KASANE_OUT_DIR`（未指定なら `viewer/dist`）。`scripts/build.ps1` は `dist/viewer` を指定して呼ぶ。
 
 | 対象 | コマンド |
 |---|---|
-| 画面: 変更監視ビルド（`dist/viewer` へ） | `$env:CV_OUT_DIR = "$PWD\dist\viewer"; npm --prefix viewer run watch`（リポジトリ直下で実行） |
+| 画面: 変更監視ビルド（`dist/viewer` へ） | `$env:KASANE_OUT_DIR = "$PWD\dist\viewer"; npm --prefix viewer run watch`（リポジトリ直下で実行） |
 | 画面: 型チェック | `npm --prefix viewer run typecheck` |
 | 画面: 単体テスト | `npm --prefix viewer test` |
-| 変換エンジン: 実行 | `uv run --project converter clash-converter ...` |
+| 変換エンジン: 実行 | `uv run --project converter kasane-converter ...` |
 | 変換エンジン: テスト | `uv run --project converter pytest` |
-| exe: ビルド | `dotnet build app/ClashViewer.Host/ClashViewer.Host.csproj -c Release` |
+| exe: ビルド | `dotnet build app/Kasane.Host/Kasane.Host.csproj -c Release` |
 
 変換エンジンの CLI 引数は [converter/README.md](converter/README.md) を参照。
 
 ## E2E テスト
 
 実際にビルドした exe（`dist/`）を起動し、WebView2 を操作して確認する。先に `scripts/build.ps1` で一式を作っておく。
-データは `dev/share/`（環境変数 `CV_SHARE` で変更可）、スクリーンショットは `dev/screenshots/` に書く。
+データは `dev/share/`（環境変数 `KASANE_SHARE` で変更可）、スクリーンショットは `dev/screenshots/` に書く。
 
 ```powershell
 npm --prefix e2e ci                # 初回だけ
@@ -126,14 +128,14 @@ scripts/run.ps1 -Root "<データフォルダ>"       # 別のデータフォル
 scripts/run.ps1 -NoDev                       # 開発モード（開発者ツール等）なしで起動
 ```
 
-`dist/干渉ビューア.exe` を直接ダブルクリックすると、インストール版と同じ `%LocalAppData%\ClashViewer\data` を使う。
+`dist/Kasane.exe` を直接ダブルクリックすると、インストール版と同じ `%LocalAppData%\Kasane\data` を使う。
 `--root` で変わるのはデータの場所だけで、`viewer/`・`tools/` は常に exe の隣のものを使う。
 
-保存先は 2 つあり、画面右上の「設定」（またはフッターの「保存先」）から変えられる。保存すると `%LocalAppData%\ClashViewer\settings.json` に書き、再起動で切り替わる。
+保存先は 2 つあり、画面右上の「設定」（またはフッターの「保存先」）から変えられる。保存すると `%LocalAppData%\Kasane\settings.json` に書き、再起動で切り替わる。
 
 | 保存先 | 中身 | 既定 | settings.json のキー |
 |---|---|---|---|
-| プロジェクトフォルダ | `datasets/`・`events/`・`issues/` | `%LocalAppData%\ClashViewer\data` | `dataRoot` |
+| プロジェクトフォルダ | `datasets/`・`events/`・`issues/` | `%LocalAppData%\Kasane\data` | `dataRoot` |
 | 設定データフォルダ | `app.json`・`members/` | プロジェクトフォルダの `config\` | `configRoot` |
 
 - 決まり方: `--root`（開発用。設定データは `<root>\config`、settings.json は見ない）＞ settings.json ＞ 既定。既定と同じ値はキーを書かない

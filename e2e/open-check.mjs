@@ -7,7 +7,7 @@ const app = await launch();
 const { page } = app;
 try {
   const r = await page.evaluate(async (f) => {
-    const a = window.__cv.app;
+    const a = window.__kasane.app;
     await a.refreshDatasets();
     const m = a.datasets.find((d) => d.folder === f);
     if (!m) return { error: "一覧にありません", list: a.datasets.map((d) => d.folder) };

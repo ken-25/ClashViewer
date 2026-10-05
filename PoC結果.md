@@ -1,4 +1,4 @@
-# 干渉ビューア PoC 結果（2026-10-01）
+# 3D施工検討Viewer Kasane PoC 結果（2026-10-01）
 
 要件定義.md の 6 章の機能を一通り実装し、E2E テスト（実際の exe を起動して WebView2 を操作）で動作を確認した。
 実データ（E57・Revit 以外の IFC）はまだ無いため、公開サンプル IFC とそこから合成した点群で測っている。
@@ -13,7 +13,7 @@ scripts/run.ps1                 # dist/ の exe を dev/share のデータで起
 
 | 場所 | 内容 |
 |---|---|
-| `app/ClashViewer.Host` | exe（.NET 10 / WinForms / WebView2、ランタイム同梱の単一ファイル 50 MB） |
+| `app/Kasane.Host` | exe（.NET 10 / WinForms / WebView2、ランタイム同梱の単一ファイル 50 MB） |
 | `viewer/` | 画面（three.js 0.186 / Fragments 3.4.7 / web-ifc 0.0.77）。Potree 2.0 ローダーは `src/pointcloud` に自前実装 |
 | `converter/` | 変換エンジン（uv 管理、PyInstaller で `tools/converter/` に 56 MB） |
 | `e2e/` | `smoke.mjs`（Range・書込権限）、`import.mjs`（取込）、`features.mjs`（全機能・2 人分）、`perf.mjs`（性能） |
