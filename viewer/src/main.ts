@@ -9,11 +9,14 @@ import type { ClipMode } from "./tools/clipping";
 import type { Projection, ViewKind } from "./scene/viewer3d";
 import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
-import { $, showMessage } from "./ui/dom";
+import { $, anyPopupOpen, setupMenus, showMessage } from "./ui/dom";
+import { openHelp } from "./ui/helpDialog";
 import { IssuePanel } from "./ui/issuePanel";
 import { Navigator } from "./ui/navigator";
 import { SettingsDialog } from "./ui/settingsDialog";
-import { renderDisplay, renderMeasures, renderProps, renderToolPanel, syncToolPanel, updatePcStats } from "./ui/viewPanels";
+import { renderLayers, renderMeasureList, renderNavMenu, renderRight, renderToolOptions, syncClipPanel, updatePcStats } from "./ui/viewPanels";
+
+const CLIP_LABEL: Record<ClipMode, string> = { none: "なし", box: "ボックス", section: "断面" };
 
 async function main() {
   if (!isHosted) {
@@ -34,35 +37,59 @@ async function main() {
 
   const data = new DataPanel(app);
   const issues = new IssuePanel(app);
+  setupMenus();
+  $("#btn-help").addEventListener("click", () => openHelp());
+
+  /** 現場を開いていないと使えないボタン（ツール・見え方）を、見た目も無効にする */
+  const syncEnabled = () => {
+    const off = !app.current;
+    document.querySelectorAll<HTMLButtonElement>("[data-tool]:not([data-tool=select]), .needs-data").forEach((b) => {
+      b.dataset.title ??= b.title;
+      b.disabled = off;
+      b.title = off ? `現場を開くと使えます。${b.dataset.title}` : b.dataset.title;
+    });
+  };
   app.on("dataset", () => {
-    renderDisplay(app);
+    syncEnabled();
+    renderLayers(app);
     renderDiff(app);
-    renderToolPanel(app);
-    renderMeasures(app);
-    renderProps(app);
-  });
-  app.on("display", () => renderDisplay(app));
-  app.on("nav", () => renderDisplay(app));
-  new Navigator(app);
-  app.on("diff", () => renderDiff(app));
-  app.on("selection", () => renderProps(app));
-  app.on("measures", () => renderMeasures(app));
-  // 切断の状態はボタン以外（指摘の視点再現・データセットを開き直す）でも変わるので、ボタンの表示を毎回合わせる
-  const syncClipButtons = () =>
-    document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => x.classList.toggle("active", x.dataset.clip === app.clipping.mode));
-  app.on("clip", () => {
-    // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
-    syncToolPanel(app);
+    renderMeasureList(app);
+    renderRight(app);
     syncClipButtons();
   });
-  app.on("align", () => renderToolPanel(app));
-  app.on("tool", () => {
-    renderToolPanel(app);
-    renderMeasures(app);
+  app.on("display", () => renderLayers(app));
+  app.on("nav", () => renderNavMenu(app));
+  new Navigator(app);
+  app.on("diff", () => {
+    renderDiff(app);
+    renderLayers(app);
   });
+  app.on("selection", () => renderRight(app));
+  app.on("measures", () => {
+    renderMeasureList(app);
+    renderToolOptions(app);
+  });
+  // 切断の状態はメニュー以外（指摘の視点再現・現場を開き直す）でも変わるので、表示を毎回合わせる
+  const syncClipButtons = () => {
+    document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => {
+      const on = x.dataset.clip === app.clipping.mode;
+      x.classList.toggle("active", on);
+      x.setAttribute("aria-checked", String(on));
+    });
+    const btn = $("#btn-clip");
+    btn.textContent = `切断: ${CLIP_LABEL[app.clipping.mode]} ▾`;
+    btn.classList.toggle("on", app.clipping.mode !== "none");
+  };
+  app.on("clip", () => {
+    // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
+    syncClipPanel(app);
+    syncClipButtons();
+  });
+  app.on("align", () => renderToolOptions(app));
+  app.on("tool", () => renderRight(app));
   app.on("pcstats", () => updatePcStats(app));
 
-  // ツールバー
+  // ツールバー（モードの切替）
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) =>
     b.addEventListener("click", () => {
       if (!app.current && b.dataset.tool !== "select") return;
@@ -99,7 +126,10 @@ async function main() {
   syncProjection(app.viewer.projection);
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
-      document.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("active", x === b));
+      document.querySelectorAll("[data-tab]").forEach((x) => {
+        x.classList.toggle("active", x === b);
+        x.setAttribute("aria-selected", String(x === b));
+      });
       document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${b.dataset.tab}`));
     }),
   );
@@ -155,7 +185,11 @@ async function main() {
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     const key = e.key.toLowerCase();
     const measuring = app.tool === "measure" && app.measure.hasPending;
+    if (document.querySelector("dialog[open]")) return;
     if (e.key === "Escape") {
+      // 開いているメニュー・パネルは、それぞれの処理が先に閉じる
+      if (anyPopupOpen()) return;
+      if (app.tool === "align") app.resetAlign();
       // 計測の作図中なら、距離は 1 点目を取り消し、折れ線はそこまでで確定する（ツールはそのまま）。
       // もう一度でツールを終える
       if (measuring) {
@@ -188,11 +222,14 @@ async function main() {
       app.snap.setFreeHeld(true);
     } else if (key === "s" && plain && !e.shiftKey && app.snap.active) {
       app.snap.setEnabled(!app.snap.enabled);
-      renderMeasures(app);
+      renderToolOptions(app);
     } else if (app.tool === "measure" && plain && !e.shiftKey && ["x", "y", "z"].includes(key)) {
       app.toggleAxisLock(key as "x" | "y" | "z");
-    } else if (e.key.toLowerCase() === "p" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    } else if (key === "p" && plain && app.current) {
       toggleProjection();
+    } else if (e.key === "F1" || (e.key === "?" && !e.ctrlKey && !e.altKey)) {
+      e.preventDefault();
+      openHelp();
     } else if (e.key === "F12" && app.ctx.dev) {
       void host.openDevTools();
     }
@@ -206,7 +243,7 @@ async function main() {
     updatePcStats(app);
   }, 1000);
 
-  // 他の人の取込・指摘を拾う（Box Drive で同期されてくる）
+  // 保存先の取込・指摘の変化を拾う（データはこの PC のローカルだけ。外部とは同期しない。要件定義 5.3）
   const poll = async () => {
     try {
       await app.refreshEvents();
@@ -225,9 +262,13 @@ async function main() {
   await poll();
   data.render();
   issues.render();
-  renderDisplay(app);
+  syncEnabled();
+  renderLayers(app);
   renderDiff(app);
-  renderMeasures(app);
+  renderMeasureList(app);
+  renderRight(app);
+  renderNavMenu(app);
+  syncClipButtons();
 
   const last = localStorage.getItem("lastDataset");
   const start = app.datasets.find((d) => d.folder === last);

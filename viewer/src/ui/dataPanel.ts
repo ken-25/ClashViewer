@@ -5,16 +5,64 @@ import { ImportJob, type ImportPlan, type ImportState } from "../import/importer
 import { $, confirmDialog, fmtDate, fmtDuration, h, mount, showMessage } from "./dom";
 import { openSettings } from "./settingsDialog";
 
-/** 「データ」タブ: 取込と、現場（系列）・版の一覧、開いているデータセットの詳細 */
+/**
+ * 現場・版のパネル（ツールバーの現場名から開くポップオーバー）: 取込と、現場（系列）・版の一覧、
+ * 表示中の版の情報。現場を開いていないときは 3D 画面の中央に入口を出す。
+ * 取込の進み具合は、パネルを閉じていても状態バーに出す。
+ */
 export class DataPanel {
   private job: ImportJob | null = null;
   private jobState: ImportState | null = null;
   private expanded = new Set<string>();
+  private readonly panel = $("#site-panel");
+  private readonly toggleBtn = $("#current-title");
 
   constructor(private readonly app: App) {
     app.on("datasets", () => this.render());
     app.on("dataset", () => this.render());
     this.setupDrop();
+    this.setupPopover();
+    $("#st-msg").addEventListener("click", () => this.open());
+  }
+
+  get isOpen() {
+    return !this.panel.classList.contains("hidden");
+  }
+
+  open() {
+    // render() は開いているときだけ中身を描くので、先に開く
+    this.panel.classList.remove("hidden");
+    this.render();
+    this.toggleBtn.setAttribute("aria-expanded", "true");
+    this.panel.querySelector<HTMLElement>("button")?.focus();
+  }
+
+  close() {
+    this.panel.classList.add("hidden");
+    this.toggleBtn.setAttribute("aria-expanded", "false");
+  }
+
+  private setupPopover() {
+    this.toggleBtn.addEventListener("click", () => (this.isOpen ? this.close() : this.open()));
+    document.addEventListener("pointerdown", (e) => {
+      const t = e.target as Element;
+      // ダイアログ（取込の確認など）はパネルの上に出るので、押しても閉じない
+      if (!this.isOpen || this.panel.contains(t) || this.toggleBtn.contains(t) || t.closest("dialog")) return;
+      this.close();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || !this.isOpen || document.querySelector("dialog[open]")) return;
+      // ツールの終了（Esc）より先に、パネルだけを閉じる
+      e.stopImmediatePropagation();
+      this.close();
+      this.toggleBtn.focus();
+    }, true);
+  }
+
+  /** 版を開く（パネルは閉じる） */
+  private async openVersion(m: Manifest) {
+    this.close();
+    await this.app.openDataset(m).catch((e) => showMessage("開けません", String(e instanceof Error ? e.message : e)));
   }
 
   private setupDrop() {
@@ -88,7 +136,19 @@ export class DataPanel {
     }
   }
 
+  /** 状態バーの取込表示（パネルを閉じていても進み具合が分かるように。押すとパネルを開く） */
+  private renderJobStatus() {
+    const st = $("#st-msg");
+    const s = this.jobState;
+    st.classList.toggle("hidden", !s);
+    if (!s) return;
+    const pct = `${(s.overall * 100).toFixed(0)}%`;
+    st.textContent = s.done ? "取込完了" : s.error ? "取込失敗" : `取込中 ${pct}・残り ${fmtDuration(s.remaining)}`;
+    st.title = "クリックで取込の詳細を開く";
+  }
+
   private renderJob() {
+    this.renderJobStatus();
     const box = document.getElementById("import-progress");
     if (!box || !this.jobState) return;
     const s = this.jobState;
@@ -115,11 +175,15 @@ export class DataPanel {
   }
 
   render() {
-    const el = $("#tab-data");
+    this.renderEmpty();
+    this.renderJobStatus();
+    if (!this.isOpen) return;
+    const el = this.panel;
     const app = this.app;
     const sites = [...app.sites.entries()].sort((a, b) => b[1][0].createdAt.localeCompare(a[1][0].createdAt));
     mount(
       el,
+      h("div", { class: "row panel-head" }, h("h2", { class: "grow" }, "現場・版"), h("button", { class: "small", title: "閉じる（Esc）", onclick: () => this.close() }, "閉じる")),
       h(
         "div",
         { class: "dropzone" },
@@ -145,6 +209,31 @@ export class DataPanel {
     this.renderJob();
   }
 
+  /** 現場を開いていないときの 3D 画面中央の入口 */
+  private renderEmpty() {
+    const el = $("#empty-view");
+    const app = this.app;
+    el.classList.toggle("hidden", !!app.current);
+    if (app.current) return;
+    const hasSites = app.sites.size > 0;
+    mount(
+      el,
+      h(
+        "div",
+        { class: "empty-card" },
+        h("h2", null, hasSites ? "現場を開いてください" : "まだデータがありません"),
+        h("p", { class: "muted" }, "E57（点群）・IFC（モデル）を画面にドロップすると取り込めます。"),
+        h("div", { class: "row", style: "justify-content:center" },
+          hasSites ? h("button", { onclick: () => this.open() }, "現場・版の一覧を開く") : null,
+          h("button", { class: "primary", onclick: () => this.pick() }, "ファイルを選んで取り込む")),
+        hasSites
+          ? null
+          : h("div", { class: "small muted" }, "保存先（プロジェクトフォルダ）: ", h("code", { title: app.ctx.root }, app.ctx.root), " ",
+              h("button", { class: "small", onclick: () => openSettings() }, "保存先を確認・変更")),
+      ),
+    );
+  }
+
   private renderSite(site: string, versions: Manifest[]) {
     const latest = versions[0];
     const cur = this.app.current;
@@ -155,7 +244,14 @@ export class DataPanel {
       { class: `site${isCur ? " current" : ""}` },
       h(
         "div",
-        { class: "site-head", onclick: () => this.app.openDataset(latest) },
+        {
+          class: "site-head",
+          role: "button",
+          tabindex: "0",
+          title: "最新版を開く",
+          onclick: () => this.openVersion(latest),
+          onkeydown: (e: KeyboardEvent) => e.key === "Enter" && this.openVersion(latest),
+        },
         h("div", { class: "row" }, h("span", { class: "name grow" }, latest.name), h("span", { class: "badge" }, `第${latest.version}版`)),
         h(
           "div",
@@ -176,7 +272,7 @@ export class DataPanel {
                     "div",
                     { class: "version" },
                     h("span", { class: "grow small" }, `第${v.version}版 ${fmtDate(v.createdAt)} ${this.app.memberName(v.createdBy)}${v.comment ? `「${v.comment}」` : ""}`),
-                    cur?.folder === v.folder ? h("span", { class: "chip" }, "表示中") : h("button", { onclick: () => this.app.openDataset(v) }, "開く"),
+                    cur?.folder === v.folder ? h("span", { class: "chip" }, "表示中") : h("button", { onclick: () => this.openVersion(v) }, "開く"),
                   ),
                 )
               : null,
@@ -188,9 +284,9 @@ export class DataPanel {
   private renderDetail(m: Manifest) {
     const pc = m.pointcloud;
     return h(
-      "div",
-      null,
-      h("h2", null, "表示中のデータセット"),
+      "details",
+      { class: "version-info" },
+      h("summary", null, `表示中の版の情報（${m.name} 第${m.version}版）`),
       h(
         "div",
         { class: "kv" },
@@ -200,7 +296,7 @@ export class DataPanel {
         h("div", null, `${fmtDate(m.createdAt)} ${this.app.memberName(m.createdBy)}`),
         h("div", null, "前の版"),
         h("div", null, m.previous ?? "なし"),
-        h("div", null, "原点オフセット"),
+        h("div", { title: "表示の内部原点を置いた WCS 上の位置（大きな座標でも表示の精度を保つため）" }, "内部原点"),
         h("div", null, m.origin.map((v) => v.toFixed(1)).join(", ")),
         h("div", null, "座標合わせ"),
         h("div", null, { identity: "IFC 座標のまま", mapConversion: "IfcMapConversion", threePoint: "3点合わせ" }[m.alignment.method] ?? m.alignment.method,
@@ -359,7 +455,7 @@ function importDialog(app: App, files: LocalFile[], ignored: LocalFile[]): Promi
         h(
           "div",
           { class: "actions" },
-          h("button", { onclick: () => { dlg.close(); resolve(null); } }, "やめる"),
+          h("button", { onclick: () => { dlg.close(); resolve(null); } }, "キャンセル"),
           h("button", { class: "primary", onclick: () => {
             if (!name.trim()) return;
             dlg.close();

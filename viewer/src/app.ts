@@ -148,10 +148,6 @@ export class App {
     this.listeners.get(topic)?.forEach((cb) => cb());
   }
 
-  setMessage(msg: string) {
-    $("#st-msg").textContent = msg;
-  }
-
   setHint(msg: string) {
     $("#hint").textContent = msg;
   }
@@ -196,7 +192,7 @@ export class App {
       await this.closeDataset();
       this.current = m;
       const origin = m.origin;
-      $("#current-title").textContent = `${m.name} 第${m.version}版`;
+      $("#current-name").textContent = `${m.name} 第${m.version}版`;
       if (m.pointcloud) {
         const pc = await PotreePointCloud.load(fileRel(m.pointcloud.owner, m.pointcloud.dir), origin, {
           pointBudget: this.pointBudget,
@@ -257,6 +253,7 @@ export class App {
     await this.models.unloadAll();
     this.clipping.setMode("none");
     this.current = null;
+    $("#current-name").textContent = "現場を選んでください";
     this.alignPreview = null;
     this.align = { model: [], cloud: [], modelScene: [], cloudScene: [] };
     this.viewer.requestRender();
@@ -314,9 +311,9 @@ export class App {
       if (!box.isEmpty()) list.push({ id: `model:${lm.key}`, kind: "model", label: lm.key, box });
     }
     if (this.nav.origins) {
-      if (this.frame.isSet) list.push({ id: "frame", kind: "frameOrigin", label: "原点", box: new THREE.Box3(this.frame.origin.clone(), this.frame.origin.clone()) });
+      if (this.frame.isSet) list.push({ id: "frame", kind: "frameOrigin", label: "UCS 原点", box: new THREE.Box3(this.frame.origin.clone(), this.frame.origin.clone()) });
       const o = worldToScene(m, [0, 0, 0]);
-      list.push({ id: "world", kind: "worldOrigin", label: "世界原点", box: new THREE.Box3(o, o.clone()) });
+      list.push({ id: "world", kind: "worldOrigin", label: "WCS 原点", box: new THREE.Box3(o, o.clone()) });
     }
     return list;
   }
@@ -387,7 +384,7 @@ export class App {
     this.emit("tool");
   }
 
-  /** ツールの案内（計測は今の手順と区間の軸で変わる）。操作キーの一覧は右の計測パネルに出す */
+  /** ツールの案内（計測は今の手順と区間の軸で変わる）。今の手順で使うキーだけを出し、一覧は「?」にまとめる */
   updateToolHint() {
     const t = this.tool;
     const keys = "Tab 候補切替・Alt フリー";
@@ -406,9 +403,9 @@ export class App {
     const hints: Record<Tool, string> = {
       select: "",
       measure: "",
-      origin: this.originStep === 0 ? `原点にする点をクリック　${keys}` : `X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${keys}`,
-      issue: "指摘する位置をクリック",
-      align: `3点合わせ: 右上のパネルの手順に従ってください　${keys}`,
+      origin: this.originStep === 0 ? `UCS: 原点にする点をクリック　${keys}・Esc 終了` : `UCS: X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${keys}`,
+      issue: "指摘する位置をクリック　Esc 終了",
+      align: `3点合わせ: 右のパネルの手順に従ってください　${keys}・Esc 終了`,
     };
     this.setHint(hints[t]);
   }
@@ -604,7 +601,9 @@ export class App {
     const l = this.frame.toLocal(p.point);
     const f = (v: number) => v.toFixed(3);
     const snap = p.snap && p.snap in SNAP_LABEL && p.snap !== "free" && p.snap !== "axis" ? `（${SNAP_LABEL[p.snap as keyof typeof SNAP_LABEL]}）` : "";
-    el.textContent = `${sourceName(p)}${snap}  局所 X ${f(l.x)} Y ${f(l.y)} Z ${f(l.z)}  ／ 世界 ${w.map(f).join(", ")}`;
+    el.textContent = this.frame.isSet
+      ? `${sourceName(p)}${snap}  UCS X ${f(l.x)} Y ${f(l.y)} Z ${f(l.z)}  ／ WCS ${w.map(f).join(", ")}`
+      : `${sourceName(p)}${snap}  WCS ${w.map(f).join(", ")}`;
   }
 
   async select(p: Pick | null) {

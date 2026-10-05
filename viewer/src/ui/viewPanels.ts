@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { App } from "../app";
+import type { App, Tool } from "../app";
 import { formatCount } from "../data/dataset";
 import { host } from "../host";
 import { ColorMode, SizeMode } from "../pointcloud/material";
@@ -11,12 +11,16 @@ import { rangeSlider } from "./rangeSlider";
 
 const BUDGETS = [500_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 10_000_000, 20_000_000];
 
-/** 「表示」タブ: 点群の見せ方、モデル・IFC クラスの表示切替 */
-export function renderDisplay(app: App) {
-  const el = $("#tab-display");
+/** 「レイヤー」タブ: 何を見ているか。点群・モデル（IFC クラス）ごとの表示・見せ方 */
+export function renderLayers(app: App) {
+  const el = $("#tab-layers");
   const pc = app.pc;
   const u = pc?.material.uniforms;
   const models = [...app.models.models.values()].filter((m) => m.role === "current");
+  if (!app.current) {
+    mount(el, h("p", { class: "muted" }, "現場を開くと、点群とモデルがここに並びます。"));
+    return;
+  }
   mount(
     el,
     h("h2", null, "点群"),
@@ -25,7 +29,7 @@ export function renderDisplay(app: App) {
           "div",
           { class: "layer" },
           h("div", { class: "row" },
-            h("label", { class: "row grow" }, h("input", { type: "checkbox", checked: pc.group.visible, onchange: (e: Event) => { pc.group.visible = (e.target as HTMLInputElement).checked; app.viewer.requestRender(); } }), "表示"),
+            h("label", { class: "row grow" }, h("input", { type: "checkbox", checked: pc.group.visible, onchange: (e: Event) => { pc.group.visible = (e.target as HTMLInputElement).checked; app.viewer.requestRender(); } }), h("b", null, "点群")),
             h("button", { title: "点群の全体が見える所へ移動（見る向きはそのまま）", onclick: () => app.focusBox(pc.boxDisplay) }, "移動")),
           h("div", { class: "row" }, h("label", null, "色"), h("select", { class: "grow", onchange: (e: Event) => app.setColorMode(Number((e.target as HTMLSelectElement).value)) },
             [[ColorMode.RGB, "RGB"], [ColorMode.Intensity, "強度"], [ColorMode.Height, "高さ"], [ColorMode.Solid, "単色"]].map(([v, l]) =>
@@ -36,7 +40,7 @@ export function renderDisplay(app: App) {
             const on = (e.target as HTMLInputElement).checked;
             pc.setSizeMode(on ? SizeMode.Adaptive : SizeMode.Fixed);
             pc.setPointSize(on ? 1 : 2);
-            renderDisplay(app);
+            renderLayers(app);
             app.viewer.requestRender();
           } }), "大きさを自動調整（離れると小さく）"),
           h("div", { class: "row" }, h("label", null, "表示点数"), h("select", { class: "grow", "aria-label": "表示点数の上限", onchange: (e: Event) => app.setPointBudget(Number((e.target as HTMLSelectElement).value)) },
@@ -82,16 +86,31 @@ export function renderDisplay(app: App) {
         ),
       ),
     ),
-    h("h2", null, "位置の目印"),
-    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.markers, onchange: (e: Event) => app.setNav({ markers: (e.target as HTMLInputElement).checked }) }),
-      "画面外・遠くの点群やモデルの方向を画面の端に出す"),
-    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.origins, onchange: (e: Event) => app.setNav({ origins: (e.target as HTMLInputElement).checked }) }),
-      "原点（世界座標の 0,0,0・設定した原点）も出す"),
-    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.nav.minimap, onchange: (e: Event) => app.setNav({ minimap: (e.target as HTMLInputElement).checked }) }),
-      "平面図（小地図）を出す"),
-    h("p", { class: "small muted" }, "目印・平面図の点群やモデルを押すと、そこへ移動します。平面図の何も無い所を押すと、その場所へ平行移動します。"),
+    app.diff
+      ? [
+          h("h2", null, "差分"),
+          h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.diffShown, onchange: (e: Event) => app.showDiff((e.target as HTMLInputElement).checked) }),
+            "前の版との差分を色分け（追加=緑・変更=黄・削除=赤）"),
+          h("div", { class: "small muted" }, "一覧は「差分」タブにあります。"),
+        ]
+      : null,
   );
   updatePcStats(app);
+}
+
+/** 3D 画面左上「目印」メニュー: 画面端の目印・原点・小地図の表示 */
+export function renderNavMenu(app: App) {
+  const item = (key: "markers" | "origins" | "minimap", label: string) =>
+    h("label", { class: "menu-check", role: "menuitemcheckbox", "aria-checked": String(app.nav[key]) },
+      h("input", { type: "checkbox", checked: app.nav[key], onchange: (e: Event) => app.setNav({ [key]: (e.target as HTMLInputElement).checked } as Record<typeof key, boolean>) }),
+      label);
+  mount(
+    $("#nav-menu"),
+    item("markers", "画面外・遠くの点群やモデルの方向を画面の端に出す"),
+    item("origins", "WCS 原点・UCS 原点も目印に出す"),
+    item("minimap", "小地図を出す"),
+    h("p", { class: "small muted" }, "目印・小地図の点群やモデルを押すと、そこへ移動します。小地図の何も無い所を押すと、その場所へ平行移動します。"),
+  );
 }
 
 export function updatePcStats(app: App) {
@@ -106,7 +125,7 @@ export function renderProps(app: App) {
   const el = $("#props");
   const sel = app.selection;
   if (!sel) {
-    mount(el, h("h2", null, "属性"), h("p", { class: "muted" }, "モデル要素をクリックすると属性を表示します。"));
+    mount(el, h("h2", null, "属性"), h("p", { class: "small muted" }, app.current ? "モデル要素をクリックすると属性を表示します。" : "現場を開いてください。"));
     return;
   }
   const d = sel.data ?? {};
@@ -142,25 +161,88 @@ export function renderProps(app: App) {
   );
 }
 
-/** 右側: 計測結果と局所座標系 */
-export function renderMeasures(app: App) {
-  const el = $("#measures");
+/** UCS（ユーザー座標系）の状態。設定済みなら「WCS に戻す」 */
+function ucsStatus(app: App) {
   const f = app.frame;
+  return f.isSet
+    ? h("div", { class: "row small" },
+        h("span", { class: "grow" }, `UCS 設定済み　X 軸の向き ${((Math.atan2(f.xAxis.y, f.xAxis.x) * 180) / Math.PI).toFixed(2)}°`),
+        h("button", { class: "small", title: "UCS を解除し、WCS（ワールド座標系）で測る", onclick: () => app.resetFrame() }, "WCS に戻す"))
+    : h("div", { class: "small muted" }, "WCS（ワールド座標系）で測ります。ツールバーの「UCS」で原点と X 軸の向きを決められます。");
+}
+
+/** 左「計測」タブ: 計測結果の一覧と、測る座標系（WCS / UCS） */
+export function renderMeasureList(app: App) {
+  const n = app.measure.list.length;
+  $("#measure-count").textContent = n ? String(n) : "";
   mount(
-    el,
-    h("h2", null, "原点（局所座標）"),
-    f.isSet
-      ? h("div", { class: "small" }, `設定済み　X 軸の向き ${((Math.atan2(f.xAxis.y, f.xAxis.x) * 180) / Math.PI).toFixed(2)}°`, " ", h("button", { onclick: () => app.resetFrame() }, "解除"))
-      : h("div", { class: "small muted" }, "未設定（世界座標の向きで測ります）。「原点設定」で決められます。"),
-    h("h2", null, `計測（${app.measure.list.length}）`),
-    app.tool === "measure" ? measureOptions(app) : null,
-    app.measure.list.length === 0 ? h("p", { class: "small muted" }, "「計測」で点をクリックします。") : null,
+    $("#tab-measures"),
+    h("h2", null, "座標系"),
+    ucsStatus(app),
+    h("h2", null, `計測結果（${n}）`),
+    n === 0 ? h("p", { class: "small muted" }, "ツールバーの「計測」で点をクリックすると、ここに残ります。") : null,
     app.measure.list
       .slice()
       .reverse()
       .map((m) => measureItem(app, m)),
-    app.measure.list.length ? h("button", { onclick: () => app.measure.clear() }, "すべて消す") : null,
+    n ? h("div", { class: "row" }, h("button", { onclick: () => app.measure.clear() }, "すべて消す")) : null,
   );
+}
+
+const TOOL_TITLE: Record<Exclude<Tool, "select">, string> = { measure: "計測", origin: "UCS（ユーザー座標系）", issue: "指摘を登録", align: "3点合わせ" };
+
+/**
+ * 右側: いま何をしているか。選択ツールなら属性、ほかのツールならそのツールの設定と手順。
+ * 切断を使っている間は、その設定を下に積む。
+ */
+export function renderRight(app: App) {
+  const sel = app.tool === "select";
+  $("#props").classList.toggle("hidden", !sel);
+  const opts = $("#tool-opts");
+  opts.classList.toggle("hidden", sel);
+  if (sel) {
+    opts.replaceChildren();
+    renderProps(app);
+  } else renderToolOptions(app);
+  renderClipPanel(app);
+}
+
+/** 右側: 選んだツールの設定（選択ツールのときは何もしない） */
+export function renderToolOptions(app: App) {
+  const t = app.tool;
+  if (t === "select") return;
+  const el = $("#tool-opts");
+  const head = h("div", { class: "row panel-head" },
+    h("h2", { class: "grow" }, TOOL_TITLE[t]),
+    h("button", { class: "small", title: "選択ツールに戻る（Esc）", onclick: () => { if (t === "align") app.resetAlign(); app.setTool("select"); } }, "終了"));
+  if (t === "align") {
+    renderAlignPanel(app, el, head);
+    return;
+  }
+  if (t === "measure") {
+    const last = app.measure.list[app.measure.list.length - 1];
+    mount(
+      el,
+      head,
+      measureOptions(app),
+      last ? [h("h3", null, "直前の結果"), measureItem(app, last)] : null,
+      h("p", { class: "small muted" }, "結果は左の「計測」タブに一覧します。キー操作は上の案内と「?」にあります。"),
+    );
+    return;
+  }
+  if (t === "origin") {
+    mount(
+      el,
+      head,
+      h("ol", { class: "small steps" },
+        h("li", null, "UCS の原点にする点をクリック"),
+        h("li", null, "X 軸の向きにする点をクリック（Esc で向きは変えずに終了）")),
+      h("p", { class: "small muted" }, "Z 軸は常に鉛直上です。点群・モデルのどちらの点でも決められます。UCS は現場ごとにこの PC に保存します。"),
+      ucsStatus(app),
+    );
+    return;
+  }
+  mount(el, head, h("p", { class: "small" }, "指摘する位置を 3D 画面でクリックすると、登録画面が開きます。"), h("p", { class: "small muted" }, "今の視点・表示の状態・画面の画像も一緒に保存します。"));
 }
 
 const axisStyle = (a: Axis | null) => (a ? { class: `axis-${a}` } : null);
@@ -212,7 +294,7 @@ function measureOptions(app: App) {
         h("button", {
           class: `${app.axisLock === a ? "active" : ""} axis-${a}`,
           "aria-pressed": String(app.axisLock === a),
-          title: `局所座標の ${a.toUpperCase()} 方向だけを測る（${a.toUpperCase()} キー。もう一度で解除）`,
+          title: `UCS（未設定なら WCS）の ${a.toUpperCase()} 方向だけを測る（${a.toUpperCase()} キー。もう一度で解除）`,
           onclick: () => app.toggleAxisLock(a),
         }, a.toUpperCase())),
       h("span", { class: "muted" }, app.axisLock ? "" : "なし（軸に近づけると吸着）")),
@@ -221,47 +303,40 @@ function measureOptions(app: App) {
         class: app.snap.enabled ? "active" : "",
         "aria-pressed": String(app.snap.enabled),
         title: "点群・モデルの端点・辺・角と、X/Y/Z 軸に吸着する（S キー）",
-        onclick: () => { app.snap.setEnabled(!app.snap.enabled); renderMeasures(app); },
+        onclick: () => { app.snap.setEnabled(!app.snap.enabled); renderToolOptions(app); },
       }, app.snap.enabled ? "オン" : "オフ")),
-    h("div", { class: "small muted keys" },
-      h("kbd", null, "Tab"), " 候補切替　", h("kbd", null, "Alt"), " 押す間フリー　", h("kbd", null, "S"), " スナップ切替", h("br"),
-      h("kbd", null, "X"), h("kbd", null, "Y"), h("kbd", null, "Z"), " 軸固定　", h("kbd", null, "Shift"), " 押す間 最大成分の軸", h("br"),
-      kind === "polyline"
-        ? [h("kbd", null, "Enter"), " 確定（ダブルクリック・Esc も）　", h("kbd", null, "Backspace"), " 1点戻す"]
-        : [h("kbd", null, "Esc"), " 1点目取消・もう一度で終了"]),
   );
 }
 
-/** 今のツールパネルの値を、作り直さずに合わせる関数（スライダーをドラッグ中に DOM を作り直すと掴みが外れる） */
+/** 切断パネルの値を、作り直さずに合わせる関数（スライダーをドラッグ中に DOM を作り直すと掴みが外れる） */
 let panelSync: { key: string; sync: () => void } | null = null;
 
 function panelKey(app: App): string {
-  return `${app.tool === "align" ? "align" : app.clipping.mode}|${app.clipping.section.axis}|${app.clipping.extent.min.toArray()}|${app.clipping.extent.max.toArray()}`;
+  return `${app.clipping.mode}|${app.clipping.section.axis}|${app.clipping.extent.min.toArray()}|${app.clipping.extent.max.toArray()}`;
 }
 
 /**
  * 切断の値だけが変わったとき（スライダー・3D のドラッグ）に呼ぶ。
  * パネルの構成が同じなら値だけ合わせ、違えば作り直す。
  */
-export function syncToolPanel(app: App) {
+export function syncClipPanel(app: App) {
   if (panelSync && panelSync.key === panelKey(app)) panelSync.sync();
-  else renderToolPanel(app);
+  else renderClipPanel(app);
 }
 
-/** 画面右上のツールパネル（切断・3点合わせ） */
-export function renderToolPanel(app: App) {
-  const el = $("#tool-panel");
+/** 右側の下段: 切断ボックス・断面の設定（切断を使っている間だけ。ツールとは別に効き続ける） */
+export function renderClipPanel(app: App) {
+  const el = $("#clip-panel");
   const clip = app.clipping;
   panelSync = null;
-  if (app.tool === "align") {
-    renderAlignPanel(app, el);
-    el.classList.remove("hidden");
-    return;
-  }
-  if (clip.mode === "none") {
+  if (clip.mode === "none" || !app.current) {
     el.classList.add("hidden");
+    el.replaceChildren();
     return;
   }
+  const head = (title: string) =>
+    h("div", { class: "row panel-head" }, h("h2", { class: "grow" }, title),
+      h("button", { class: "small", title: "切断をやめて全体を表示する", onclick: () => clip.setMode("none") }, "切断なし"));
   el.classList.remove("hidden");
   const ext = clip.extent;
   const { lo, hi } = clip.limits();
@@ -290,16 +365,16 @@ export function renderToolPanel(app: App) {
     panelSync = { key: panelKey(app), sync: () => sliders.forEach((s) => s.sync()) };
     mount(
       el,
-      h("h3", null, "切断ボックス"),
+      head("切断ボックス"),
       sliders.map((s) => s.el),
       h("label", { class: "row small" },
         h("input", { type: "checkbox", checked: app.clipEditor.enabled, onchange: (e: Event) => { app.clipEditor.enabled = (e.target as HTMLInputElement).checked; app.clipEditor.refresh(); } }),
         "3D で面をドラッグして動かす"),
       h("div", { class: "small muted" }, "手前の面はそのままドラッグ、奥の面（箱の内側）は Shift を押しながらドラッグ。箱の外をドラッグすると回転します。"),
       h("div", { class: "row" },
-        h("button", { disabled: !app.lastPick, title: "最後にクリックした位置の周り 4m の箱", onclick: () => { if (app.lastPick) { clip.boxAround(app.lastPick.point, 2); renderToolPanel(app); } } }, "選択位置の周り"),
-        h("button", { onclick: () => { clip.setBox(ext); renderToolPanel(app); } }, "全体に戻す"),
-        h("button", { onclick: () => app.viewer.fit(clip.box.clone()) }, "箱に寄る"),
+        h("button", { disabled: !app.lastPick, title: "最後にクリックした位置の周り 4m の箱にする", onclick: () => { if (app.lastPick) { clip.boxAround(app.lastPick.point, 2); renderClipPanel(app); } } }, "クリック位置の周り"),
+        h("button", { title: "箱を全体の大きさに戻す", onclick: () => { clip.setBox(ext); renderClipPanel(app); } }, "範囲をリセット"),
+        h("button", { title: "箱の全体が見える所へ移動", onclick: () => app.viewer.fit(clip.box.clone()) }, "箱へ移動"),
       ),
     );
   } else {
@@ -321,20 +396,20 @@ export function renderToolPanel(app: App) {
     };
     mount(
       el,
-      h("h3", null, "断面"),
+      head("断面"),
       h("div", { class: "row small" }, "向き",
         ...(["z", "x", "y"] as const).map((a) => h("button", { class: s.axis === a ? "active" : "", onclick: () => {
           const c = ext.getCenter(new THREE.Vector3());
           clip.setSection({ axis: a, position: c[a] });
-          renderToolPanel(app);
+          renderClipPanel(app);
         } }, a === "z" ? "水平" : `垂直（${a.toUpperCase()}）`))),
       pos,
       h("div", { class: "row small" }, h("label", null, "厚み"), thickness),
       h("label", { class: "row small" }, flip, "残す側を反対にする"),
       h("div", { class: "small muted", id: "section-label" }),
       h("div", { class: "row" },
-        h("button", { disabled: !app.lastPick, onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderToolPanel(app); } } }, "選択位置に合わせる"),
-        h("button", { onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.viewBox()) }, "断面に正対"),
+        h("button", { disabled: !app.lastPick, title: "最後にクリックした位置を断面の位置にする", onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderClipPanel(app); } } }, "クリック位置に合わせる"),
+        h("button", { title: "断面に向き合う視点に切り替える", onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.viewBox()) }, "断面を正面から見る"),
       ),
     );
     updateSectionLabel(app);
@@ -347,16 +422,19 @@ function updateSectionLabel(app: App) {
   if (!el || !m) return;
   const s = app.clipping.section;
   const i = { x: 0, y: 1, z: 2 }[s.axis];
-  el.textContent = `位置（世界座標）${(s.position + m.origin[i]).toFixed(3)} m`;
+  el.textContent = `位置（WCS）${(s.position + m.origin[i]).toFixed(3)} m`;
 }
 
-function renderAlignPanel(app: App, el: HTMLElement) {
+/** 3点合わせの「水平を保つ」（パネルを作り直しても保つ） */
+let alignLevelOnly = true;
+
+function renderAlignPanel(app: App, el: HTMLElement, head: HTMLElement) {
   const a = app.align;
   const n = Math.min(a.model.length, a.cloud.length);
   const step = a.model.length + a.cloud.length;
   const next = step >= 6 ? null : a.model.length <= a.cloud.length ? `モデル上の点 ${a.model.length + 1}` : `点群上の対応する点 ${a.cloud.length + 1}`;
   let result: { matrix: THREE.Matrix4; residual: number; errors: number[] } | null = null;
-  const levelOnly = (el.dataset.level ?? "1") === "1";
+  const levelOnly = alignLevelOnly;
   if (n >= 3 && app.current) {
     try {
       result = solveRigid(a.model.slice(0, n), a.cloud.slice(0, n), levelOnly);
@@ -370,13 +448,14 @@ function renderAlignPanel(app: App, el: HTMLElement) {
   app.setHint(next ? `3点合わせ: ${next} をクリック` : "3点合わせ: 結果を確認して保存してください");
   mount(
     el,
-    h("h3", null, "3点合わせ"),
+    head,
     h("p", { class: "small muted" }, "モデル上の点と、それに対応する点群上の点を交互に 3 組クリックします（柱の角・梁の端など、両方で同じ所が分かる点）。モデルを点群に重ねます。"),
-    h("div", { class: "row small" }, "移動",
-      h("button", { class: next?.startsWith("モデル") ? "active" : "", disabled: app.models.box().isEmpty(), onclick: () => app.focusBox(app.models.box()) }, "モデルへ"),
-      h("button", { class: next?.startsWith("点群") ? "active" : "", disabled: !app.pc, onclick: () => app.pc && app.focusBox(app.pc.boxDisplay) }, "点群へ")),
+    h("div", { class: "small" }, next ? `次: ${next} をクリック` : "結果を確認して保存してください"),
+    h("div", { class: "row small" },
+      h("button", { class: next?.startsWith("モデル") ? "active" : "", disabled: app.models.box().isEmpty(), title: "モデルの全体が見える所へ移動", onclick: () => app.focusBox(app.models.box()) }, "モデルへ移動"),
+      h("button", { class: next?.startsWith("点群") ? "active" : "", disabled: !app.pc, title: "点群の全体が見える所へ移動", onclick: () => app.pc && app.focusBox(app.pc.boxDisplay) }, "点群へ移動")),
     h("ol", { class: "small" }, [0, 1, 2].map((i) => h("li", null, `モデル ${a.model[i] ? "✓" : "—"}　点群 ${a.cloud[i] ? "✓" : "—"}${result ? `　ずれ ${(result.errors[i] * 1000).toFixed(0)} mm` : ""}`))),
-    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: levelOnly, onchange: (e: Event) => { el.dataset.level = (e.target as HTMLInputElement).checked ? "1" : "0"; renderAlignPanel(app, el); } }), "水平を保つ（Z 軸回りの回転と移動だけ）"),
+    h("label", { class: "row small" }, h("input", { type: "checkbox", checked: levelOnly, onchange: (e: Event) => { alignLevelOnly = (e.target as HTMLInputElement).checked; renderAlignPanel(app, el, head); } }), "水平を保つ（Z 軸回りの回転と移動だけ）"),
     result ? h("div", { class: "small" }, `残差（RMS）${(result.residual * 1000).toFixed(1)} mm`) : null,
     h(
       "div",
@@ -397,9 +476,8 @@ function renderAlignPanel(app: App, el: HTMLElement) {
         await app.refreshDatasets();
         app.resetAlign();
         app.setTool("select");
-        await showMessage("座標合わせを保存しました", "この版を開く全員に反映されます。");
-      } }, "保存（全員に反映）"),
-      h("button", { onclick: () => { app.resetAlign(); app.setTool("select"); } }, "閉じる"),
+        await showMessage("座標合わせを保存しました", "次にこの版を開いたときも、この合わせ方で表示します。");
+      } }, "保存"),
     ),
   );
 }

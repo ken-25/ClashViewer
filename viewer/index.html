@@ -9,62 +9,86 @@
   </head>
   <body>
     <div id="app">
+      <!-- ツールバー: 開いている現場と、作業のモード（ツール）だけを置く。見え方の切替は 3D 画面の左上 -->
       <header id="toolbar" role="toolbar" aria-label="操作">
         <span class="brand">干渉ビューア</span>
-        <span id="current-title" class="current-title">データセットを選んでください</span>
+        <button id="current-title" class="current-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="site-panel" title="現場・版を開く・取り込む">
+          <span id="current-name">現場を選んでください</span> ▾
+        </button>
         <div class="group" role="group" aria-label="ツール">
           <button data-tool="select" class="active" title="要素を選んで属性を見る（Esc）">選択</button>
           <button data-tool="measure" title="距離・折れ線を測る。軸に沿わせると X/Y/Z 方向に吸着（X/Y/Z キーで固定）">計測</button>
-          <button data-tool="origin" title="1点目=原点、2点目=X軸の向き">原点設定</button>
-          <button data-tool="issue" title="クリックした位置に指摘を登録">指摘登録</button>
+          <button data-tool="origin" title="ユーザー座標系（UCS）を決める。1点目=原点、2点目=X軸の向き">UCS</button>
+          <button data-tool="issue" title="クリックした位置に指摘を登録">指摘を登録</button>
           <button data-tool="align" title="モデルと点群の対応する3点で合わせる">3点合わせ</button>
         </div>
-        <div class="group" role="group" aria-label="切断">
-          <button data-clip="none" class="active">切断なし</button>
-          <button data-clip="box">切断ボックス</button>
-          <button data-clip="section">断面</button>
+        <div class="toolbar-end">
+          <button id="btn-help" title="操作キーの一覧（F1）" aria-label="操作キーの一覧">?</button>
+          <button id="btn-settings" title="表示名・保存先（プロジェクトフォルダ・設定データフォルダ）">設定</button>
         </div>
-        <div class="group" role="group" aria-label="視点">
-          <button data-view="iso" title="斜め上から全体を見る（前・右はこの視点が基準）">全体</button>
-          <button data-view="top" title="真上から見下ろす（平面図の向き）">上から</button>
-          <button data-view="front" title="前（−Y 側）から +Y 方向を見る">前から</button>
-          <button data-view="back" title="後ろ（+Y 側）から −Y 方向を見る">後ろから</button>
-          <button data-view="left" title="左（−X 側）から +X 方向を見る">左から</button>
-          <button data-view="right" title="右（+X 側）から −X 方向を見る">右から</button>
-          <button id="btn-projection" aria-pressed="false" title="平行投影（遠近なし）と透視を切り替える（P）">平行投影</button>
-        </div>
-        <button id="btn-settings" class="toolbar-end" title="表示名・保存先（プロジェクトフォルダ・設定データフォルダ）">設定</button>
       </header>
+      <!-- 現場・版の一覧と取込（ツールバーの現場名から開く） -->
+      <div id="site-panel" class="popover hidden" role="dialog" aria-label="現場・版"></div>
 
+      <!-- 左: 何を見ているか（レイヤー）と、作業で残ったもの（計測・指摘・差分） -->
       <aside id="left">
         <nav class="tabs" role="tablist">
-          <button role="tab" data-tab="data" class="active">データ</button>
-          <button role="tab" data-tab="display">表示</button>
+          <button role="tab" data-tab="layers" class="active">レイヤー</button>
+          <button role="tab" data-tab="measures">計測 <span id="measure-count" class="badge"></span></button>
           <button role="tab" data-tab="issues">指摘 <span id="issue-count" class="badge"></span></button>
           <button role="tab" data-tab="diff">差分</button>
         </nav>
-        <section id="tab-data" class="tab active" role="tabpanel"></section>
-        <section id="tab-display" class="tab" role="tabpanel"></section>
+        <section id="tab-layers" class="tab active" role="tabpanel"></section>
+        <section id="tab-measures" class="tab" role="tabpanel"></section>
         <section id="tab-issues" class="tab" role="tabpanel"></section>
         <section id="tab-diff" class="tab" role="tabpanel"></section>
       </aside>
 
       <main id="view">
+        <!-- どう見えているか（視点・投影・切断・目印） -->
+        <div id="view-bar" class="view-bar" role="toolbar" aria-label="見え方">
+          <div class="menu-wrap">
+            <button id="btn-view" class="needs-data" aria-haspopup="menu" aria-expanded="false" title="視点を切り替える（方位の軸を押しても切り替わります）">視点 ▾</button>
+            <div class="menu hidden" role="menu" aria-label="視点">
+              <button role="menuitem" data-view="iso" title="斜め上から全体を見る（前・右はこの視点が基準）">斜め上から</button>
+              <button role="menuitem" data-view="top" title="真上から見下ろす（小地図と同じ向き）">平面</button>
+              <button role="menuitem" data-view="front" title="前（−Y 側）から +Y 方向を見る">正面</button>
+              <button role="menuitem" data-view="back" title="後ろ（+Y 側）から −Y 方向を見る">背面</button>
+              <button role="menuitem" data-view="left" title="左（−X 側）から +X 方向を見る">左側面</button>
+              <button role="menuitem" data-view="right" title="右（+X 側）から −X 方向を見る">右側面</button>
+            </div>
+          </div>
+          <button id="btn-projection" class="needs-data" aria-pressed="false" title="平行投影（遠近なし）と透視を切り替える（P）">平行投影</button>
+          <div class="menu-wrap">
+            <button id="btn-clip" class="needs-data" aria-haspopup="menu" aria-expanded="false" title="切断ボックス・断面（設定は右のパネル）">切断: なし ▾</button>
+            <div class="menu hidden" role="menu" aria-label="切断">
+              <button role="menuitemradio" data-clip="none" class="active">切断なし</button>
+              <button role="menuitemradio" data-clip="box">切断ボックス</button>
+              <button role="menuitemradio" data-clip="section">断面</button>
+            </div>
+          </div>
+          <div class="menu-wrap">
+            <button id="btn-nav" class="needs-data" aria-haspopup="menu" aria-expanded="false" title="位置の目印・小地図">目印 ▾</button>
+            <div id="nav-menu" class="menu menu-wide hidden" role="menu" aria-label="位置の目印"></div>
+          </div>
+        </div>
         <div id="hint" class="hint" aria-live="polite"></div>
+        <div id="empty-view" class="empty-view hidden"></div>
         <div id="loading" class="loading hidden" aria-live="polite"></div>
-        <div id="tool-panel" class="tool-panel hidden"></div>
       </main>
 
+      <!-- 右: いま何をしているか（選んだツールの設定と結果、切断の設定） -->
       <aside id="right">
-        <section id="props"><h2>属性</h2><p class="muted">モデル要素をクリックすると属性を表示します。</p></section>
-        <section id="measures"></section>
+        <section id="props"></section>
+        <section id="tool-opts" class="hidden"></section>
+        <section id="clip-panel" class="clip-panel hidden"></section>
       </aside>
 
       <footer id="status" aria-live="polite">
         <span id="st-coord">座標 —</span>
         <span id="st-points"></span>
         <span id="st-fps"></span>
-        <span id="st-msg"></span>
+        <button id="st-msg" class="status-link hidden"></button>
         <button id="st-root" class="status-link" title="保存先（クリックで設定を開く）"></button>
         <span id="st-user"></span>
       </footer>
@@ -74,6 +98,7 @@
     <dialog id="dlg-import"></dialog>
     <dialog id="dlg-issue"></dialog>
     <dialog id="dlg-settings" aria-label="設定"></dialog>
+    <dialog id="dlg-help" aria-label="操作キーの一覧"></dialog>
     <dialog id="dlg-message"></dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

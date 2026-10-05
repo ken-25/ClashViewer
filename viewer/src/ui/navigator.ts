@@ -80,7 +80,7 @@ export class Navigator {
     });
     view.appendChild(this.axes);
 
-    this.mapSvg = svg("svg", { class: "minimap-svg", width: "220", height: "160", role: "img", "aria-label": "平面の小地図" }) as SVGSVGElement;
+    this.mapSvg = svg("svg", { class: "minimap-svg", width: "220", height: "160", role: "img", "aria-label": "小地図" }) as SVGSVGElement;
     this.mapStatic = svg("g") as SVGGElement;
     this.mapCamera = svg("g") as SVGGElement;
     this.mapSvg.append(this.mapStatic, this.mapCamera);
@@ -91,8 +91,8 @@ export class Navigator {
       h(
         "div",
         { class: "minimap-head" },
-        h("span", { class: "grow" }, "平面図（上が +Y）"),
-        h("button", { class: "minimap-close", title: "小地図を閉じる（「表示」タブで戻せます）", "aria-label": "小地図を閉じる", onclick: () => this.app.setNav({ minimap: false }) }, "×"),
+        h("span", { class: "grow" }, "小地図（上が +Y）"),
+        h("button", { class: "minimap-close", title: "小地図を閉じる（3D 画面左上の「目印」で戻せます）", "aria-label": "小地図を閉じる", onclick: () => this.app.setNav({ minimap: false }) }, "×"),
       ),
       this.mapSvg,
     );

@@ -77,7 +77,53 @@ export function showMessage(title: string, body: string | Node, buttons: { label
 
 export async function confirmDialog(title: string, body: string, ok = "OK"): Promise<boolean> {
   return (await showMessage(title, body, [
-    { label: "やめる", value: "cancel" },
+    { label: "キャンセル", value: "cancel" },
     { label: ok, value: "ok", primary: true },
   ])) === "ok";
+}
+
+/**
+ * ボタンで開く小さなメニュー（.menu-wrap の中の button と .menu）。
+ * メニュー内の button を押すと閉じる（チェックボックスは閉じずに続けて切り替えられる）。
+ * 外を押す・Esc でも閉じる。
+ */
+export function setupMenus(root: ParentNode = document) {
+  const wraps = [...root.querySelectorAll<HTMLElement>(".menu-wrap")];
+  const close = (w: HTMLElement) => {
+    w.querySelector(".menu")?.classList.add("hidden");
+    w.querySelector(":scope > button")?.setAttribute("aria-expanded", "false");
+  };
+  for (const w of wraps) {
+    const btn = w.querySelector<HTMLButtonElement>(":scope > button")!;
+    const menu = w.querySelector<HTMLElement>(".menu")!;
+    btn.addEventListener("click", () => {
+      const open = menu.classList.contains("hidden");
+      wraps.forEach(close);
+      if (open) {
+        menu.classList.remove("hidden");
+        btn.setAttribute("aria-expanded", "true");
+        menu.querySelector<HTMLElement>("button,input")?.focus();
+      }
+    });
+    menu.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest("button")) close(w);
+    });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    for (const w of wraps) if (!w.contains(e.target as Node)) close(w);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = wraps.find((w) => !w.querySelector(".menu")?.classList.contains("hidden"));
+    if (!open) return;
+    // ツールの終了（Esc）より先に、開いているメニューだけを閉じる
+    e.stopImmediatePropagation();
+    close(open);
+    open.querySelector<HTMLElement>(":scope > button")?.focus();
+  }, true);
+}
+
+/** 開いているメニュー・ポップオーバーがあるか（Esc をそちらに使わせる） */
+export function anyPopupOpen(): boolean {
+  return !!document.querySelector(".menu:not(.hidden), .popover:not(.hidden)");
 }

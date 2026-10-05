@@ -40,7 +40,7 @@ export class IssuePanel {
         h("option", { value: "" }, "すべて"), STATUSES.map((s) => h("option", { value: s, selected: filter.status === s }, s)))),
       h("div", { class: "row small" }, h("label", null, "担当"), h("select", { class: "grow", onchange: (e: Event) => { filter.assignee = (e.target as HTMLSelectElement).value; this.render(); } },
         h("option", { value: "" }, "すべて"), app.ctx.members.map((m) => h("option", { value: m.id, selected: filter.assignee === m.id }, m.name)))),
-      h("div", { class: "row small" }, h("label", null, "データセット"), h("select", { class: "grow", onchange: (e: Event) => { filter.scope = (e.target as HTMLSelectElement).value as any; this.render(); } },
+      h("div", { class: "row small" }, h("label", null, "範囲"), h("select", { class: "grow", onchange: (e: Event) => { filter.scope = (e.target as HTMLSelectElement).value as any; this.render(); } },
         h("option", { value: "site", selected: filter.scope === "site" }, "この現場の全版"),
         h("option", { value: "version", selected: filter.scope === "version" }, "表示中の版だけ"),
         h("option", { value: "all", selected: filter.scope === "all" }, "すべての現場"))),
@@ -75,7 +75,7 @@ export class IssuePanel {
         otherVersion ? h("button", { onclick: async () => {
           const ds = app.datasets.find((d) => d.folder === i.dataset);
           if (ds) { await app.openDataset(ds); await app.restoreView(i.view); }
-          else await showMessage("開けません", "登録した版のデータセットが見つかりません（削除された可能性があります）。");
+          else await showMessage("開けません", "登録した版が見つかりません（削除された可能性があります）。");
         } }, "登録した版で開く") : null,
       ),
       h("div", { class: "row small" }, h("label", null, "状態"), h("select", { class: "grow", onchange: (e: Event) => app.appendEvent({ type: "issue.update", id: i.id, status: (e.target as HTMLSelectElement).value }) },
@@ -135,9 +135,9 @@ export class IssuePanel {
         h("div", { class: "row" }, h("label", null, "コメント"), h("textarea", { class: "grow", rows: 3, oninput: (e: Event) => { comment = (e.target as HTMLTextAreaElement).value; } })),
         h("div", { class: "row" }, h("label", null, "担当"), h("select", { class: "grow", onchange: (e: Event) => { assignee = (e.target as HTMLSelectElement).value; } },
           h("option", { value: "" }, "なし"), app.ctx.members.map((x) => h("option", { value: x.id }, x.name)))),
-        h("div", { class: "small muted" }, `位置（世界座標）${sceneToWorld(m, p.point).map((v) => v.toFixed(3)).join(", ")}　${p.source === "model" ? "モデル上" : "点群上"}`),
+        h("div", { class: "small muted" }, `位置（WCS）${sceneToWorld(m, p.point).map((v) => v.toFixed(3)).join(", ")}　${p.source === "model" ? "モデル上" : "点群上"}`),
         h("div", { class: "actions" },
-          h("button", { onclick: () => { dlg.close(); resolve(false); } }, "やめる"),
+          h("button", { onclick: () => { dlg.close(); resolve(false); } }, "キャンセル"),
           h("button", { class: "primary", onclick: () => { dlg.close(); resolve(true); } }, "登録"),
         ),
       );

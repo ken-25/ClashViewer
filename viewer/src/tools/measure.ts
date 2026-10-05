@@ -34,7 +34,7 @@ export class LocalFrame {
     this.gizmo.add(mk(new THREE.Vector3(1, 0, 0), 0xff4040), mk(new THREE.Vector3(0, 1, 0), 0x40d040), mk(new THREE.Vector3(0, 0, 1), 0x4080ff));
     const label = document.createElement("div");
     label.className = "origin-label";
-    label.textContent = "原点";
+    label.textContent = "UCS";
     this.gizmo.add(new CSS2DObject(label));
     this.gizmo.visible = false;
     viewer.overlay.add(this.gizmo);

@@ -152,7 +152,7 @@ try {
     const pc = await clickRetry("cloud");
     if (!pc) {
       // 点群に対応する点が無い所（未施工・隠れ）は、モデル側の点を取り消して次の候補へ（パネルの「やり直す」と同じ考え方）
-      await page.click('#tool-panel button:has-text("1点戻す")');
+      await page.click('#tool-opts button:has-text("1点戻す")');
       console.log("  点群側の対応点が無いため次の候補へ");
       continue;
     }
@@ -161,15 +161,15 @@ try {
     console.log(`  対応点（${k.cls}）: 点群側のクリック位置と正解の差 ${(err * 1000).toFixed(0)} mm`);
     if (err > 0.3) {
       // 手前の別の物を拾った。利用者が画面で見て「1点戻す」のと同じ
-      await page.click('#tool-panel button:has-text("1点戻す")');
-      await page.click('#tool-panel button:has-text("1点戻す")');
+      await page.click('#tool-opts button:has-text("1点戻す")');
+      await page.click('#tool-opts button:has-text("1点戻す")');
       continue;
     }
     pairErr.push(err);
   }
   const align = await page.evaluate(() => {
     const a = window.__cv.app;
-    return { n: [a.align.model.length, a.align.cloud.length], preview: a.alignPreview?.toArray() ?? null, panel: document.getElementById("tool-panel").innerText };
+    return { n: [a.align.model.length, a.align.cloud.length], preview: a.alignPreview?.toArray() ?? null, panel: document.getElementById("tool-opts").innerText };
   });
   assert(align.n[0] === 3 && align.n[1] === 3 && align.preview, "3 組の対応点から合わせ行列を計算");
   const M = align.preview; // 列優先
@@ -182,7 +182,7 @@ try {
   results.align = { pairClickErrorMm: pairErr.map((e) => +(e * 1000).toFixed(1)), yawDeg: +((yaw * 180) / Math.PI).toFixed(3), centerErrorMm: +(centerErr * 1000).toFixed(1), panel: align.panel.replace(/\n/g, " / ") };
   console.log("  ", JSON.stringify(results.align));
   assert(Math.abs((yaw * 180) / Math.PI - 23.5) < 0.5 && centerErr < 0.1, "正解の変換に近い（回転 0.5° 以内・建物中心で 100 mm 以内）");
-  await page.click('#tool-panel button.primary');
+  await page.click('#tool-opts button.primary');
   await page.waitForSelector("#dlg-message[open]");
   await page.click("#dlg-message button.primary");
   const mf = JSON.parse(readFileSync(join(share, "datasets", latest, "manifest.json"), "utf8"));
@@ -301,6 +301,7 @@ try {
   results.props = props.split("\n").slice(0, 8).join(" | ");
 
   // ======== 切断ボックス・断面 ========
+  await page.click('#btn-clip');
   await page.click('[data-clip="box"]');
   await page.evaluate(() => {
     const a = window.__cv.app;
@@ -319,13 +320,16 @@ try {
   const outside = await lastPick();
   assert(clip.planes === 6 && clip.pcClip && outside === null, "切断ボックス（6 面、点群・モデル共通、外側は拾わない）");
   await page.screenshot({ path: join(shots, "e2e-clipbox.png") });
+  await page.click('#btn-clip');
   await page.click('[data-clip="section"]');
   await page.evaluate(() => window.__cv.app.clipping.setSection({ axis: "z", thickness: 0.3 }));
   const sec = await page.evaluate(() => window.__cv.app.viewer.renderer.clippingPlanes.length);
+  await page.click('#btn-view');
   await page.click('[data-view="top"]');
   await idle(1500);
   await page.screenshot({ path: join(shots, "e2e-section.png") });
   assert(sec === 2, "水平断面（厚み 30 cm の薄切り）");
+  await page.click('#btn-clip');
   await page.click('[data-clip="none"]');
   await idle(500);
 

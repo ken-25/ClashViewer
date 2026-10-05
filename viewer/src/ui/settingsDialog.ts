@@ -163,9 +163,9 @@ export class SettingsDialog {
     }
     const r = await showMessage(
       "保存しました",
-      `新しい保存先は再起動すると使われます。${copied}\n\n今すぐ再起動しますか？（開いているデータセットは閉じます）`,
+      `新しい保存先は再起動すると使われます。${copied}\n\n今すぐ再起動しますか？（開いている現場は閉じます）`,
       [
-        { label: "あとで", value: "later" },
+        { label: "後で再起動", value: "later" },
         { label: "今すぐ再起動", value: "restart", primary: true },
       ],
     );
@@ -395,9 +395,9 @@ export class SettingsDialog {
         const now = s.project.info.datasets ?? 0;
         if (!info.exists) notes.push({ cls: "", text: "フォルダはまだありません。保存するときに作ります。" });
         if ((info.datasets ?? 0) > 0)
-          notes.push({ cls: "", text: `データセット ${info.datasets} 件が入っています。切り替えると、このフォルダの内容が一覧に出ます。` });
+          notes.push({ cls: "", text: `取込済みの版 ${info.datasets} 件が入っています。切り替えると、このフォルダの内容が一覧に出ます。` });
         else if (now > 0)
-          notes.push({ cls: "", text: `データセットはありません。今のフォルダのデータセット ${now} 件は移動しないので、切り替えると一覧は空になります。` });
+          notes.push({ cls: "", text: `取込済みの版はありません。今のフォルダの版 ${now} 件は移動しないので、切り替えると一覧は空になります。` });
       } else if (!info.exists) {
         notes.push({ cls: "", text: "フォルダはまだありません。保存するときに作ります。" });
       } else if (info.hasAppJson || (info.members ?? 0) > 0) {
@@ -426,7 +426,7 @@ export function describe(kind: FolderKind, info: FolderInfo): string {
   if (info.driveType === "Network") parts.push("ネットワーク");
   else if (info.driveType === "Removable") parts.push("取り外せるドライブ");
   if (info.exists) {
-    if (kind === "project") parts.push(`データセット ${info.datasets ?? 0} 件`);
+    if (kind === "project") parts.push(`取込済みの版 ${info.datasets ?? 0} 件`);
     else parts.push(`app.json ${info.hasAppJson ? "あり" : "なし"}・メンバー ${info.members ?? 0} 人`);
   }
   return parts.join("　");

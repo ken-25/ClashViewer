@@ -83,16 +83,20 @@ scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（bu
 
 ### 画面だけ作り直す（開発用の短縮）
 
+exe は隣の `viewer/` フォルダ（開発では `dist/viewer`）の画面を表示する。画面の変更を exe で確かめるときは、`dist/viewer` を作り直してから exe を起動し直す。
+
 ```powershell
 scripts/build-viewer.ps1           # 型チェック + Vite ビルドして dist/viewer に置く
 ```
 
 ## 開発コマンド
 
+Vite の出力先は環境変数 `CV_OUT_DIR`（未指定なら `viewer/dist`）。`scripts/build.ps1`・`scripts/build-viewer.ps1` は `dist/viewer` を指定して呼ぶ。
+
 | 対象 | コマンド |
 |---|---|
-| 画面: ビルド | `npm --prefix viewer run build` |
-| 画面: 変更監視ビルド | `npm --prefix viewer run watch` |
+| 画面: ビルド（`dist/viewer` へ） | `scripts/build-viewer.ps1` |
+| 画面: 変更監視ビルド（`dist/viewer` へ） | `$env:CV_OUT_DIR = "$PWD\dist\viewer"; npm --prefix viewer run watch`（リポジトリ直下で実行） |
 | 画面: 型チェック | `npm --prefix viewer run typecheck` |
 | 画面: 単体テスト | `npm --prefix viewer test` |
 | 変換エンジン: 実行 | `uv run --project converter clash-converter ...` |
