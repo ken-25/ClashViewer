@@ -383,7 +383,9 @@ export class Navigator {
     if (horiz > 0.05) {
       // 見ている向きと横の画角（地図は y が下向きなので Y を反転）
       const ang = Math.atan2(-fwd.y, fwd.x);
-      const hfov = Math.atan(Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * cam.aspect);
+      // 平行投影でも、注視点の奥行きで同じ視野になる透視の画角で描く
+      const v = this.app.viewer;
+      const hfov = Math.atan(Math.tan(THREE.MathUtils.degToRad(v.fov / 2)) * v.aspect);
       const L = 26;
       const a1 = ang - hfov;
       const a2 = ang + hfov;

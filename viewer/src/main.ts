@@ -6,7 +6,7 @@ import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
 import { host, isHosted } from "./host";
 import type { ClipMode } from "./tools/clipping";
-import type { ViewKind } from "./scene/viewer3d";
+import type { Projection, ViewKind } from "./scene/viewer3d";
 import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
 import { $, showMessage } from "./ui/dom";
@@ -77,6 +77,19 @@ async function main() {
   document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) =>
     b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.viewBox())),
   );
+  // 投影の切替（平行投影 / 透視）。指摘の視点再現でも切り替わるので、ボタンの表示は viewer の通知で合わせる
+  const projBtn = $("#btn-projection") as HTMLButtonElement;
+  const syncProjection = (p: Projection) => {
+    const on = p === "orthographic";
+    projBtn.classList.toggle("active", on);
+    projBtn.setAttribute("aria-pressed", String(on));
+    localStorage.setItem("projection", p);
+  };
+  app.viewer.onProjectionChange(syncProjection);
+  const toggleProjection = () => app.viewer.setProjection(app.viewer.projection === "orthographic" ? "perspective" : "orthographic");
+  projBtn.addEventListener("click", toggleProjection);
+  if (localStorage.getItem("projection") === "orthographic") app.viewer.setProjection("orthographic");
+  syncProjection(app.viewer.projection);
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
       document.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("active", x === b));
@@ -114,6 +127,8 @@ async function main() {
     } else if (app.tool === "ortho" && ["x", "y", "z"].includes(e.key.toLowerCase())) {
       app.orthoAxis = e.key.toLowerCase() as "x" | "y" | "z";
       renderMeasures(app);
+    } else if (e.key.toLowerCase() === "p" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      toggleProjection();
     } else if (e.key === "F12" && app.ctx.dev) {
       void host.openDevTools();
     }

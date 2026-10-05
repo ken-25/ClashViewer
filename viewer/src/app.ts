@@ -543,7 +543,8 @@ export class App {
       camera: {
         position: sceneToWorld(m, this.viewer.camera.position),
         target: sceneToWorld(m, this.viewer.controls.target),
-        fov: this.viewer.camera.fov,
+        fov: this.viewer.fov,
+        projection: this.viewer.projection,
       },
       clip: this.clipping.serialize(m.origin),
       visibility,
@@ -554,10 +555,11 @@ export class App {
   async restoreView(v: IssueView) {
     const m = this.current;
     if (!m || !v) return;
+    // 投影を先に切り替える（切り替えは位置を引き継ぐので、位置はその後に置く）
+    this.viewer.setProjection(v.camera.projection === "orthographic" ? "orthographic" : "perspective");
     this.viewer.camera.position.copy(worldToScene(m, v.camera.position));
     this.viewer.controls.target.copy(worldToScene(m, v.camera.target));
-    this.viewer.camera.fov = v.camera.fov || this.viewer.camera.fov;
-    this.viewer.camera.updateProjectionMatrix();
+    if (v.camera.fov) this.viewer.fov = v.camera.fov;
     this.viewer.cameraMoved();
     this.clipping.restore(v.clip, m.origin);
     if (v.visibility?.pointcloud && this.pc) {

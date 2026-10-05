@@ -3,6 +3,25 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
 export type ViewKind = "iso" | "top" | "front" | "back" | "right" | "left";
+/** 投影。perspective = 透視、orthographic = 平行（直交） */
+export type Projection = "perspective" | "orthographic";
+
+/**
+ * Fragments（モデル）の LOD・カリング用のカメラ。姿勢と投影行列は表示中のカメラを写す。
+ * Fragments 3.4.7 は OrthographicCamera を渡すと LOD の寸法が求まらない（画角が無く、
+ * 平行投影の寸法も返さない）ため、常に透視カメラの型で渡す。Fragments は視錐台を求める前に
+ * updateProjectionMatrix() を呼ぶので、そこで表示中のカメラの投影行列に差し替える。
+ */
+class LodCamera extends THREE.PerspectiveCamera {
+  source: THREE.PerspectiveCamera | THREE.OrthographicCamera | null = null;
+
+  override updateProjectionMatrix() {
+    super.updateProjectionMatrix();
+    if (!this.source) return;
+    this.projectionMatrix.copy(this.source.projectionMatrix);
+    this.projectionMatrixInverse.copy(this.source.projectionMatrixInverse);
+  }
+}
 
 /** 左ドラッグの回転 1 回分 */
 interface OrbitDrag {
@@ -26,8 +45,15 @@ export class Viewer3D {
   readonly renderer: THREE.WebGLRenderer;
   readonly labelRenderer: CSS2DRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.PerspectiveCamera;
+  /** 透視のカメラ。画角（fov）と縦横比はこちらが持ち、平行投影でも視野の大きさの基準にする */
+  readonly perspCamera: THREE.PerspectiveCamera;
+  /** 平行投影のカメラ。位置・向きは透視と同じ扱いで、視野の高さは注視点までの奥行きから決める */
+  readonly orthoCamera: THREE.OrthographicCamera;
+  /** Fragments に渡すカメラ（LodCamera の説明を参照） */
+  readonly lodCamera = new LodCamera();
   readonly controls: OrbitControls;
+  private _projection: Projection = "perspective";
+  private readonly projectionListeners = new Set<(p: Projection) => void>();
   readonly content = new THREE.Group(); // 点群・モデル
   /** 計測線・指摘の印など。切断の影響を受けないよう別シーンで後から描く */
   readonly overlay = new THREE.Scene();
@@ -52,10 +78,13 @@ export class Viewer3D {
     container.appendChild(this.labelRenderer.domElement);
 
     THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.05, 5000);
-    this.camera.up.set(0, 0, 1);
-    this.camera.position.set(30, -30, 25);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.perspCamera = new THREE.PerspectiveCamera(55, 1, 0.05, 5000);
+    this.perspCamera.up.set(0, 0, 1);
+    this.perspCamera.position.set(30, -30, 25);
+    this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 5000);
+    this.orthoCamera.up.set(0, 0, 1);
+    this.lodCamera.up.set(0, 0, 1);
+    this.controls = new OrbitControls(this.perspCamera, this.renderer.domElement);
     this.controls.enableDamping = false;
     // ホイールは自前で処理する（カーソル下の物体までの距離に比例して寄る）。OrbitControls の
     // ズームは注視点までの距離で拡縮するため、注視点に近づくと寄れなくなる
@@ -65,7 +94,12 @@ export class Viewer3D {
     this.controls.enableRotate = false;
     this.controls.screenSpacePanning = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
-    this.controls.addEventListener("change", () => this.requestRender());
+    // 投影は描く前にも合わせるが、カメラが動いた直後の表示更新（Fragments・目印）に間に合うよう先に合わせる。
+    // 先に登録するので、他の "change" の受け手より前に走る
+    this.controls.addEventListener("change", () => {
+      this.syncProjection();
+      this.requestRender();
+    });
     this.renderer.domElement.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     // OrbitControls（構築時に登録済み）と切断箱の編集（capture で先に受けて controls を止める）の
     // 後に受ける。移動・離すは画面外へ出ても拾えるよう window で受ける
@@ -93,6 +127,67 @@ export class Viewer3D {
     return this.renderer.domElement;
   }
 
+  /** 表示中のカメラ（投影で切り替わる）。位置・向きを変えたら cameraMoved() を呼ぶ */
+  get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this._projection === "orthographic" ? this.orthoCamera : this.perspCamera;
+  }
+
+  get projection(): Projection {
+    return this._projection;
+  }
+
+  /** 縦の画角（度）。平行投影では、注視点の奥行きで透視と同じ大きさに見える視野の高さを決める */
+  get fov(): number {
+    return this.perspCamera.fov;
+  }
+
+  set fov(v: number) {
+    if (!(v > 0 && v < 180)) return;
+    this.perspCamera.fov = v;
+    this.syncProjection();
+    this.requestRender();
+  }
+
+  /** 画面の縦横比（幅 / 高さ） */
+  get aspect(): number {
+    return this.perspCamera.aspect;
+  }
+
+  onProjectionChange(cb: (p: Projection) => void): () => void {
+    this.projectionListeners.add(cb);
+    return () => this.projectionListeners.delete(cb);
+  }
+
+  /**
+   * 透視・平行投影を切り替える。位置・向き・注視点はそのまま引き継ぎ、平行投影の視野の高さは
+   * 注視点の奥行きで透視と同じ大きさに見えるように決める（切り替えても注視点付近の見え方が変わらない）。
+   * 回転・移動・ホイールは同じ操作で動く（ホイールはカメラを寄せ、視野も奥行きに合わせて狭まる）。
+   */
+  setProjection(p: Projection) {
+    if (p === this._projection) return;
+    const from = this.camera;
+    this._projection = p;
+    const to = this.camera;
+    to.position.copy(from.position);
+    to.quaternion.copy(from.quaternion);
+    to.updateMatrixWorld();
+    this.controls.object = to;
+    this.cancelOrbit();
+    this.zoomPivot = null;
+    this.cameraMoved();
+    for (const cb of this.projectionListeners) cb(p);
+  }
+
+  /**
+   * 平行投影の視野の半分の高さ（シーン座標の m）。透視のときは undefined。
+   * Fragments の LOD に渡す（Fragments は透視のときの「距離 × tan(画角/2)」と同じ意味で使う）。
+   */
+  orthoHalfHeight(): number | undefined {
+    if (this._projection !== "orthographic") return undefined;
+    const o = this.orthoCamera;
+    return (o.top - o.bottom) / (2 * o.zoom);
+  }
+
   get size(): { width: number; height: number } {
     return { width: this.container.clientWidth, height: this.container.clientHeight };
   }
@@ -116,20 +211,49 @@ export class Viewer3D {
     if (width === 0 || height === 0) return;
     this.renderer.setSize(width, height, false);
     this.labelRenderer.setSize(width, height);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.perspCamera.aspect = width / height;
+    this.syncProjection();
     this.requestRender();
   }
 
-  /** 近・遠クリップ面を注視点までの距離に合わせる（深度の精度を保つ） */
-  private updateClipRange() {
-    const d = this.camera.position.distanceTo(this.controls.target);
-    this.camera.near = THREE.MathUtils.clamp(d / 2000, 0.005, 1);
-    this.camera.far = Math.max(2000, d * 50);
-    this.camera.updateProjectionMatrix();
+  /**
+   * 表示中のカメラの投影を合わせる。近・遠クリップ面は注視点までの距離に合わせる（深度の精度を保つ）。
+   * 平行投影の視野の高さは、注視点の奥行きで透視と同じ大きさに見えるようにする。
+   * Fragments 用のカメラ（lodCamera）へ姿勢と投影を写す。
+   */
+  private syncProjection() {
+    const cam = this.camera;
+    const d = cam.position.distanceTo(this.controls.target);
+    cam.near = THREE.MathUtils.clamp(d / 2000, 0.005, 1);
+    cam.far = Math.max(2000, d * 50);
+    if (cam instanceof THREE.OrthographicCamera) {
+      const fwd = cam.getWorldDirection(new THREE.Vector3());
+      const depth = Math.max(this.controls.target.clone().sub(cam.position).dot(fwd), 1e-3);
+      const half = depth * Math.tan(THREE.MathUtils.degToRad(this.perspCamera.fov / 2));
+      cam.top = half;
+      cam.bottom = -half;
+      cam.left = -half * this.perspCamera.aspect;
+      cam.right = half * this.perspCamera.aspect;
+      cam.zoom = 1;
+    }
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+
+    const lod = this.lodCamera;
+    lod.source = cam;
+    lod.fov = this.perspCamera.fov;
+    lod.aspect = this.perspCamera.aspect;
+    lod.near = cam.near;
+    lod.far = cam.far;
+    lod.position.copy(cam.position);
+    lod.quaternion.copy(cam.quaternion);
+    lod.updateProjectionMatrix();
+    lod.updateMatrixWorld();
   }
 
   private tick() {
+    // 点群の LOD（beforeRender）が新しい投影で選べるよう先に合わせる
+    this.syncProjection();
     for (const cb of this.beforeRender) cb();
     if (!this.dirty && !this.continuous) return;
     this.dirty = false;
@@ -142,7 +266,7 @@ export class Viewer3D {
 
   render() {
     const t0 = performance.now();
-    this.updateClipRange();
+    this.syncProjection();
     this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
     // 重ね描き（切断なし・深度は消して常に手前に）
@@ -380,6 +504,7 @@ export class Viewer3D {
     const depth = Math.max(point.clone().sub(cam).dot(fwd), 0.02);
     this.controls.target.copy(cam).addScaledVector(fwd, depth);
     this.controls.update();
+    this.syncProjection();
     // マウス操作の終了と同じく "end" を出して、モデルの LOD・カリングを更新させる
     this.controls.dispatchEvent({ type: "end" });
     this.requestRender();
@@ -396,11 +521,11 @@ export class Viewer3D {
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     const radius = box.getSize(new THREE.Vector3()).length() / 2;
-    const dist = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    // 平行投影も注視点（中心）の奥行きで透視と同じ視野になるので、同じ距離で収まる
+    const dist = radius / Math.sin(THREE.MathUtils.degToRad(this.fov / 2));
     const dir = direction.clone().normalize();
     this.controls.target.copy(center);
     this.camera.position.copy(center).addScaledVector(dir, dist * 0.9);
-    this.camera.updateProjectionMatrix();
     this.cameraMoved();
   }
 
@@ -411,6 +536,8 @@ export class Viewer3D {
    */
   cameraMoved() {
     this.controls.update();
+    // update() は動きが小さいと "change" を出さないので、ここでも投影を合わせる
+    this.syncProjection();
     this.controls.dispatchEvent({ type: "end" });
     this.requestRender();
   }

@@ -91,7 +91,9 @@ export class ModelManager {
   ): Promise<LoadedModel> {
     const modelId = `${datasetFolder}/${key}`;
     if (this.models.has(modelId)) await this.unload(modelId);
-    const model = await this.fragments.load(buffer, { modelId, camera: this.viewer.camera });
+    // LOD・カリング用のカメラは表示中のカメラを写した透視型（平行投影でも Fragments が LOD を求められる）
+    const model = await this.fragments.load(buffer, { modelId, camera: this.viewer.lodCamera });
+    this.useOrthoLod(model);
     model.getClippingPlanesEvent = () => this.viewer.renderer.clippingPlanes;
     const holder = new THREE.Group();
     holder.name = modelId;
@@ -117,6 +119,18 @@ export class ModelManager {
     this.models.set(modelId, lm);
     await this.update(true);
     return lm;
+  }
+
+  /**
+   * 平行投影のときの LOD の寸法を Fragments に渡す。Fragments 3.4.7 はこれを常に undefined にしており
+   * （ViewManager.setOrtho）、透視の「距離 × tan(画角/2)」で LOD を選ぶ。平行投影では奥の物も同じ大きさに
+   * 見えるので、それだと注視点より奥の物が粗くなる。内部の受け口（_viewManager._updateOrthoSizeEvent）を
+   * 差し替える。版が変わって受け口が無ければ何もしない（透視の基準で LOD を選ぶだけで、表示はできる）。
+   */
+  private useOrthoLod(model: FRAGS.FragmentsModel) {
+    const vm = (model as any)._viewManager;
+    if (!vm || typeof vm._updateOrthoSizeEvent !== "function") return;
+    vm._updateOrthoSizeEvent = () => this.viewer.orthoHalfHeight();
   }
 
   /** ifcToScene = T(−原点) · A。F → シーン座標の行列を設定する */
