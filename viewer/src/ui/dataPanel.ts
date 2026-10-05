@@ -3,6 +3,7 @@ import { formatBytes, formatCount, safeKey, type Manifest } from "../data/datase
 import { host, type LocalFile } from "../host";
 import { ImportJob, type ImportPlan, type ImportState } from "../import/importer";
 import { $, confirmDialog, fmtDate, fmtDuration, h, mount, showMessage } from "./dom";
+import { openSettings } from "./settingsDialog";
 
 /** 「データ」タブ: 取込と、現場（系列）・版の一覧、開いているデータセットの詳細 */
 export class DataPanel {
@@ -128,7 +129,16 @@ export class DataPanel {
       ),
       this.job ? h("div", { class: "import-box", id: "import-progress" }) : null,
       h("h2", null, `現場 ${sites.length} 件`),
-      sites.length === 0 ? h("p", { class: "muted" }, "まだデータがありません。") : null,
+      sites.length === 0
+        ? h(
+            "div",
+            { class: "empty-state" },
+            h("p", { class: "muted" }, "まだデータがありません。"),
+            h("div", { class: "small muted" }, "保存先（プロジェクトフォルダ）:"),
+            h("code", { class: "small", title: app.ctx.root }, app.ctx.root),
+            h("div", { class: "row" }, h("button", { class: "small", onclick: () => openSettings() }, "保存先を確認・変更")),
+          )
+        : null,
       sites.map(([site, versions]) => this.renderSite(site, versions)),
       app.current ? this.renderDetail(app.current) : null,
     );

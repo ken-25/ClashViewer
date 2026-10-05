@@ -39,6 +39,7 @@ public sealed class ImportService
     }
 
     public bool IsActive(string id) => _sessions.ContainsKey(id);
+    public bool AnyActive => !_sessions.IsEmpty;
 
     public JsonObject Begin(string name)
     {

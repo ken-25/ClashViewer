@@ -5,7 +5,7 @@ import { host } from "../host";
 import { ColorMode, SizeMode } from "../pointcloud/material";
 import { solveRigid } from "../tools/align";
 import { MIN_BOX_SIZE } from "../tools/clipBoxEdit";
-import { fmtM } from "../tools/measure";
+import { fmtM, MEASURE_KIND_LABEL, type Axis, type Measurement } from "../tools/measure";
 import { $, h, mount, showMessage } from "./dom";
 import { rangeSlider } from "./rangeSlider";
 
@@ -153,24 +153,82 @@ export function renderMeasures(app: App) {
       ? h("div", { class: "small" }, `設定済み　X 軸の向き ${((Math.atan2(f.xAxis.y, f.xAxis.x) * 180) / Math.PI).toFixed(2)}°`, " ", h("button", { onclick: () => app.resetFrame() }, "解除"))
       : h("div", { class: "small muted" }, "未設定（世界座標の向きで測ります）。「原点設定」で決められます。"),
     h("h2", null, `計測（${app.measure.list.length}）`),
-    app.tool === "ortho"
-      ? h("div", { class: "row small" }, "方向", ...(["auto", "x", "y", "z"] as const).map((a) =>
-          h("button", { class: app.orthoAxis === a ? "active" : "", onclick: () => { app.orthoAxis = a; renderMeasures(app); } }, a === "auto" ? "自動" : a.toUpperCase())))
-      : null,
-    app.measure.list.length === 0 ? h("p", { class: "small muted" }, "「計測」「直交計測」で 2 点をクリックします。") : null,
+    app.tool === "measure" ? measureOptions(app) : null,
+    app.measure.list.length === 0 ? h("p", { class: "small muted" }, "「計測」で点をクリックします。") : null,
     app.measure.list
       .slice()
       .reverse()
-      .map((m) =>
-        h(
-          "div",
-          { class: "issue-item" },
-          h("div", { class: "row" }, h("b", { class: "grow" }, `${m.ortho ? `${m.ortho.toUpperCase()} 方向 ` : ""}${fmtM(m.distance)}`), h("button", { "aria-label": "この計測を消す", onclick: () => app.measure.remove(m.id) }, "×")),
-          h("div", { class: "small muted" }, `ΔX ${m.components.x.toFixed(3)}　ΔY ${m.components.y.toFixed(3)}　ΔZ ${m.components.z.toFixed(3)}`),
-          h("div", { class: "small muted" }, `${m.sources[0]} → ${m.sources[1]}`),
-        ),
-      ),
+      .map((m) => measureItem(app, m)),
     app.measure.list.length ? h("button", { onclick: () => app.measure.clear() }, "すべて消す") : null,
+  );
+}
+
+const axisStyle = (a: Axis | null) => (a ? { class: `axis-${a}` } : null);
+
+/** 一覧の 1 件。折れ線は合計と区間ごとの長さ */
+function measureItem(app: App, m: Measurement) {
+  const del = h("button", { "aria-label": "この計測を消す", onclick: () => app.measure.remove(m.id) }, "×");
+  const src = h("div", { class: "small muted" }, m.sources.map((s, i) => (m.snaps[i] ? `${s}（${m.snaps[i]}）` : s)).join(" → "));
+  if (m.kind === "distance") {
+    const s = m.segments[0];
+    return h(
+      "div",
+      { class: "issue-item" },
+      h("div", { class: "row" }, h("b", { class: "grow" }, h("span", axisStyle(s.axis), s.axis ? `${s.axis.toUpperCase()} 方向 ` : ""), fmtM(m.total)), del),
+      s.axis ? null : h("div", { class: "small muted" }, `ΔX ${m.components.x.toFixed(3)}　ΔY ${m.components.y.toFixed(3)}　ΔZ ${m.components.z.toFixed(3)}`),
+      src,
+    );
+  }
+  return h(
+    "div",
+    { class: "issue-item" },
+    h("div", { class: "row" }, h("b", { class: "grow" }, `折れ線 計 ${fmtM(m.total)}`), h("span", { class: "small muted" }, `${m.segments.length} 区間`), del),
+    h("table", { class: "seg-table small" },
+      m.segments.map((s, i) =>
+        h("tr", null,
+          h("td", { class: "muted" }, String(i + 1)),
+          h("td", axisStyle(s.axis), s.axis ? s.axis.toUpperCase() : "—"),
+          h("td", { class: "num" }, fmtM(s.length))))),
+    h("div", { class: "small muted" }, `始点→終点 ΔX ${m.components.x.toFixed(3)}　ΔY ${m.components.y.toFixed(3)}　ΔZ ${m.components.z.toFixed(3)}`),
+  );
+}
+
+/** 計測中の種類・軸の固定・スナップの切替と操作キーの案内 */
+function measureOptions(app: App) {
+  const kind = app.measure.kind;
+  return h(
+    "div",
+    { class: "measure-opts" },
+    h("div", { class: "row small", role: "group", "aria-label": "計測の種類" }, h("span", { class: "lbl" }, "種類"),
+      ...(["distance", "polyline"] as const).map((k) =>
+        h("button", {
+          class: kind === k ? "active" : "",
+          "aria-pressed": String(kind === k),
+          title: k === "distance" ? "2 点をクリックして 1 本測る" : "点を続けてクリックし、区間ごとの長さと合計を測る（Enter・ダブルクリックで確定）",
+          onclick: () => app.setMeasureKind(k),
+        }, MEASURE_KIND_LABEL[k]))),
+    h("div", { class: "row small", role: "group", "aria-label": "軸の固定" }, h("span", { class: "lbl" }, "軸固定"),
+      ...(["x", "y", "z"] as const).map((a) =>
+        h("button", {
+          class: `${app.axisLock === a ? "active" : ""} axis-${a}`,
+          "aria-pressed": String(app.axisLock === a),
+          title: `局所座標の ${a.toUpperCase()} 方向だけを測る（${a.toUpperCase()} キー。もう一度で解除）`,
+          onclick: () => app.toggleAxisLock(a),
+        }, a.toUpperCase())),
+      h("span", { class: "muted" }, app.axisLock ? "" : "なし（軸に近づけると吸着）")),
+    h("div", { class: "row small" }, h("span", { class: "lbl" }, "スナップ"),
+      h("button", {
+        class: app.snap.enabled ? "active" : "",
+        "aria-pressed": String(app.snap.enabled),
+        title: "点群・モデルの端点・辺・角と、X/Y/Z 軸に吸着する（S キー）",
+        onclick: () => { app.snap.setEnabled(!app.snap.enabled); renderMeasures(app); },
+      }, app.snap.enabled ? "オン" : "オフ")),
+    h("div", { class: "small muted keys" },
+      h("kbd", null, "Tab"), " 候補切替　", h("kbd", null, "Alt"), " 押す間フリー　", h("kbd", null, "S"), " スナップ切替", h("br"),
+      h("kbd", null, "X"), h("kbd", null, "Y"), h("kbd", null, "Z"), " 軸固定　", h("kbd", null, "Shift"), " 押す間 最大成分の軸", h("br"),
+      kind === "polyline"
+        ? [h("kbd", null, "Enter"), " 確定（ダブルクリック・Esc も）　", h("kbd", null, "Backspace"), " 1点戻す"]
+        : [h("kbd", null, "Esc"), " 1点目取消・もう一度で終了"]),
   );
 }
 

@@ -7,7 +7,7 @@ namespace ClashViewer.Host;
 /// https://cv.local/ の応答を自前で返す。
 ///
 /// - /            画面（viewer/）
-/// - /data/...    データフォルダのデータ（datasets/・issues/・config/）。Range 要求に 206 で応える
+/// - /data/...    プロジェクトフォルダ（datasets/・issues/・events/）と設定データフォルダ（config/）。Range 要求に 206 で応える
 /// - /local/<t>   利用者が選んだローカルファイル（トークン指定）
 /// - PUT /api/write?path=...  取込中データセット・指摘画像の書き込み
 ///

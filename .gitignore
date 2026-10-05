@@ -47,6 +47,8 @@ sample/
 *.las
 *.laz
 *.frag
+# 上のフォルダ名（issues/ 等）はデータ用。viewer のソースのフォルダには当てない
+!viewer/src/**/
 
 # 同梱バイナリ（PotreeConverter 等）。scripts/fetch-third-party.ps1 で取得する
 third_party/

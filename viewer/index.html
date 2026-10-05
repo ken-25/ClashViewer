@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>干渉ビューア</title>
+    <!-- アイコンは使わない。指定しないと /favicon.ico を取りに行き 404 が出る -->
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <div id="app">
@@ -12,8 +14,7 @@
         <span id="current-title" class="current-title">データセットを選んでください</span>
         <div class="group" role="group" aria-label="ツール">
           <button data-tool="select" class="active" title="要素を選んで属性を見る（Esc）">選択</button>
-          <button data-tool="measure" title="2点間の距離">計測</button>
-          <button data-tool="ortho" title="局所座標の X/Y/Z 方向だけを測る">直交計測</button>
+          <button data-tool="measure" title="距離・折れ線を測る。軸に沿わせると X/Y/Z 方向に吸着（X/Y/Z キーで固定）">計測</button>
           <button data-tool="origin" title="1点目=原点、2点目=X軸の向き">原点設定</button>
           <button data-tool="issue" title="クリックした位置に指摘を登録">指摘登録</button>
           <button data-tool="align" title="モデルと点群の対応する3点で合わせる">3点合わせ</button>
@@ -32,6 +33,7 @@
           <button data-view="right" title="右（+X 側）から −X 方向を見る">右から</button>
           <button id="btn-projection" aria-pressed="false" title="平行投影（遠近なし）と透視を切り替える（P）">平行投影</button>
         </div>
+        <button id="btn-settings" class="toolbar-end" title="表示名・保存先（プロジェクトフォルダ・設定データフォルダ）">設定</button>
       </header>
 
       <aside id="left">
@@ -63,6 +65,7 @@
         <span id="st-points"></span>
         <span id="st-fps"></span>
         <span id="st-msg"></span>
+        <button id="st-root" class="status-link" title="保存先（クリックで設定を開く）"></button>
         <span id="st-user"></span>
       </footer>
     </div>
@@ -70,6 +73,7 @@
     <div id="drop-overlay" class="hidden">E57・IFC をドロップして取り込む</div>
     <dialog id="dlg-import"></dialog>
     <dialog id="dlg-issue"></dialog>
+    <dialog id="dlg-settings" aria-label="設定"></dialog>
     <dialog id="dlg-message"></dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

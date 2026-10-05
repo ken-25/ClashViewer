@@ -499,6 +499,142 @@ body.tool-active .issue-pin {
 .origin-label {
   color: #fff;
 }
+/* 2 点目を探している間の距離（成分は小さく 2 行目に） */
+.measure-label.preview {
+  text-align: center;
+  line-height: 1.3;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.measure-label.preview .c {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* スナップの印とカーソル横の説明（位置は translate で毎フレーム合わせる） */
+body.tool-active #view canvas.gl {
+  cursor: crosshair;
+}
+.snap-marker,
+.snap-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 1;
+  will-change: translate;
+}
+.snap-marker {
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  color: #3ef08a;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+.snap-marker svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.snap-marker.cloud {
+  color: #ffb347;
+}
+.snap-marker.free {
+  color: #fff;
+}
+.snap-marker.free svg {
+  stroke-width: 1.5;
+}
+.snap-marker.axis {
+  color: #9ad0ff;
+}
+.snap-tip {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: rgba(15, 17, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.snap-tip .chip {
+  color: var(--muted);
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  padding-left: 6px;
+}
+.snap-marker.hidden,
+.snap-tip.hidden {
+  display: none;
+}
+
+/* 計測の方向・スナップの切替 */
+.measure-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.measure-opts .row {
+  align-items: center;
+  gap: 4px;
+}
+.measure-opts .lbl {
+  width: 4.5em;
+  color: var(--muted);
+}
+.measure-label.total {
+  color: #fff;
+  font-weight: 600;
+  border: 1px solid rgba(255, 224, 102, 0.5);
+}
+.measure-label .v {
+  display: inline;
+}
+.measure-label.preview .v {
+  display: block;
+}
+/* 軸の色（X 赤・Y 緑・Z 青）。押した状態のボタンは背景の色で示す */
+.axis-x:not(.active) {
+  color: #ff8a8a;
+}
+.axis-y:not(.active) {
+  color: #7fe07f;
+}
+.axis-z:not(.active) {
+  color: #7fb8ff;
+}
+.seg-table {
+  border-collapse: collapse;
+  margin: 2px 0;
+}
+.seg-table td {
+  padding: 0 8px 0 0;
+}
+.seg-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.measure-opts .keys {
+  line-height: 1.8;
+}
+kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 4px;
+  margin-right: 2px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text);
+}
 
 /* 位置の目印（画面端の矢印・方位・平面図） */
 #nav-layer {
@@ -767,4 +903,123 @@ dialog td {
   font-size: 22px;
   z-index: 10;
   pointer-events: none;
+}
+
+/* 設定 */
+#toolbar .toolbar-end {
+  margin-left: auto;
+  flex: none;
+}
+#st-root {
+  margin-left: auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#st-user {
+  margin-left: 0;
+}
+button.status-link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+button.status-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+button.small {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+#dlg-settings {
+  width: 680px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+/* 長くなってもボタンは常に見えるように */
+#dlg-settings > .actions {
+  position: sticky;
+  bottom: -14px;
+  background: var(--panel);
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+.settings h3 {
+  margin: 0 0 6px;
+}
+.settings-section {
+  margin: 0 0 14px;
+}
+.settings-section > summary {
+  font-weight: 600;
+}
+.storage-card {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.storage-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+.storage-label {
+  min-width: 6em;
+}
+.storage-path code,
+.settings-local code,
+.empty-state code {
+  font-family: Consolas, "BIZ UDGothic", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.empty-state code {
+  display: block;
+  margin: 2px 0 4px;
+}
+.storage-meta {
+  flex-basis: 100%;
+  padding-left: calc(6em + 6px);
+}
+.storage-next {
+  border-left: 3px solid var(--accent);
+  padding: 2px 0 2px 8px;
+  margin: 6px 0;
+}
+.storage-notes {
+  margin: 4px 0;
+  padding-left: 1.4em;
+}
+.storage-notes li.warn {
+  color: var(--warn);
+}
+.storage-notes li.bad {
+  color: var(--bad);
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+.notice.warn {
+  border-left-color: var(--warn);
+}
+.notice.bad {
+  border-left-color: var(--bad);
+}
+.settings-local td:first-child {
+  white-space: nowrap;
+  width: 8em;
 }

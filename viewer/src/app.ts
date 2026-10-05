@@ -8,14 +8,19 @@ import { foldIssues, type Issue, type IssueEvent, type IssueView } from "./issue
 import { ModelManager, type LoadedModel } from "./model/models";
 import { ColorMode } from "./pointcloud/material";
 import { PotreePointCloud } from "./pointcloud/potree";
-import { Picker, type Pick } from "./scene/picker";
+import { candidateToPick, Picker, type Pick } from "./scene/picker";
+import { SNAP_LABEL, type SnapCandidate } from "./scene/snap";
 import { Viewer3D } from "./scene/viewer3d";
 import { ClipBoxEditor } from "./tools/clipBoxEdit";
 import { Clipping } from "./tools/clipping";
-import { LocalFrame, MeasureTool } from "./tools/measure";
+import { LocalFrame, MeasureTool, type Axis, type MeasureKind } from "./tools/measure";
+import { SnapCursor } from "./tools/snapCursor";
 import { $ } from "./ui/dom";
 
-export type Tool = "select" | "measure" | "ortho" | "origin" | "issue" | "align";
+export type Tool = "select" | "measure" | "origin" | "issue" | "align";
+
+/** カーソルが軸の線からこの距離（px）以内なら、その軸に吸着する */
+const AXIS_TRACK_PX = 10;
 
 export interface AlignPick {
   model: THREE.Vector3[]; // IFC 座標
@@ -44,6 +49,10 @@ export interface NavSettings {
 const SELECT_COLOR = new THREE.Color(0x3399ff);
 const DIFF_COLORS = { added: new THREE.Color(0x3cc85a), changed: new THREE.Color(0xf2c01e), removed: new THREE.Color(0xe5534b) };
 
+function sourceName(p: Pick): string {
+  return p.source === "model" ? "モデル" : p.source === "cloud" ? "点群" : "軸上";
+}
+
 function loadNavSettings(): NavSettings {
   const def: NavSettings = { markers: true, origins: true, minimap: true };
   try {
@@ -69,7 +78,11 @@ export class App {
   current: Manifest | null = null;
   pc: PotreePointCloud | null = null;
   tool: Tool = "select";
-  orthoAxis: "auto" | "x" | "y" | "z" = "auto";
+  /** 計測の区間を固定する軸（X/Y/Z キーで固定、もう一度で解除）。null なら軸に近いときだけ吸着 */
+  axisLock: Axis | null = null;
+  /** Shift を押している間（最も大きい成分の軸に固定） */
+  shiftHeld = false;
+  readonly snap: SnapCursor;
   selection: { lm: LoadedModel; localId: number; data: any } | null = null;
   lastPick: Pick | null = null;
   issues = new Map<string, Issue>();
@@ -98,6 +111,16 @@ export class App {
     this.frame = new LocalFrame(this.viewer);
     this.measure = new MeasureTool(this.viewer, this.frame);
     this.measure.onChange = () => this.emit("measures");
+    this.picker.axes = () => this.frame.axes();
+    this.snap = new SnapCursor(this.viewer, this.picker);
+    this.snap.options = () => this.snapOptions();
+    this.snap.augment = (list, x, y) => this.addAxisCandidate(list, x, y);
+    this.snap.onChange = (c) => {
+      if (this.tool === "measure") this.measure.setPreview(c?.point ?? null, c ? this.segmentAxis(c.point) : this.axisLock);
+      if (c) this.showCoord(candidateToPick(c));
+    };
+    this.viewer.controls.addEventListener("change", () => this.snap.cameraMoved());
+    this.viewer.controls.addEventListener("end", () => this.snap.refresh());
     this.clipping.onChange = () => {
       if (this.pc) this.pc.clipBox = this.clipping.mode === "box" ? this.clipping.box : null;
       this.pc?.invalidate();
@@ -359,27 +382,168 @@ export class App {
     document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
     // 計測・合わせ中は指摘のピンをクリックで反応させない（ピンの下の点を拾えるように）
     document.body.classList.toggle("tool-active", t !== "select");
+    this.updateToolHint();
+    this.snap.refresh();
+    this.emit("tool");
+  }
+
+  /** ツールの案内（計測は今の手順と区間の軸で変わる）。操作キーの一覧は右の計測パネルに出す */
+  updateToolHint() {
+    const t = this.tool;
+    const keys = "Tab 候補切替・Alt フリー";
+    if (t === "measure") {
+      const m = this.measure;
+      const lock = this.axisLock ? `（${this.axisLock.toUpperCase()} 方向に固定）` : "";
+      if (m.kind === "distance") {
+        const step = m.hasPending ? `2点目をクリック${lock}` : "1点目をクリック";
+        this.setHint(`距離: ${step}　${keys}・X/Y/Z 軸固定・Esc ${m.hasPending ? "取消" : "終了"}`);
+      } else {
+        const step = !m.hasPending ? "1点目をクリック" : m.pointCount === 1 ? `2点目をクリック${lock}` : `次の点をクリック${lock}・Enter/ダブルクリックで確定`;
+        this.setHint(`折れ線: ${step}　${keys}・Backspace 1点戻す・Esc ${m.hasPending ? "確定" : "終了"}`);
+      }
+      return;
+    }
     const hints: Record<Tool, string> = {
       select: "",
-      measure: "1点目をクリック（点群・モデルのどちらでも）",
-      ortho: "直交計測: 1点目をクリック。2点目は局所座標の X/Y/Z のうち最も大きい方向だけを測ります（X/Y/Z キーで固定）",
-      origin: "原点にする点をクリック",
+      measure: "",
+      origin: this.originStep === 0 ? `原点にする点をクリック　${keys}` : `X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${keys}`,
       issue: "指摘する位置をクリック",
-      align: "3点合わせ: 右上のパネルの手順に従ってください",
+      align: `3点合わせ: 右上のパネルの手順に従ってください　${keys}`,
     };
     this.setHint(hints[t]);
-    this.emit("tool");
+  }
+
+  /** 計測の種類（距離・折れ線）を変える */
+  setMeasureKind(k: MeasureKind) {
+    this.measure.setKind(k);
+    this.updateToolHint();
+    this.snap.refresh();
+    this.emit("measures");
+  }
+
+  /** X/Y/Z キー・パネルのボタン。同じ軸をもう一度で解除 */
+  toggleAxisLock(a: Axis) {
+    this.axisLock = this.axisLock === a ? null : a;
+    this.updateToolHint();
+    this.snap.refresh();
+    this.emit("measures");
+  }
+
+  setShiftHeld(on: boolean) {
+    if (this.shiftHeld === on) return;
+    this.shiftHeld = on;
+    this.snap.refresh();
+  }
+
+  /**
+   * 最後の点 → target の区間の軸。優先順: X/Y/Z キーの固定 → Shift（最も大きい成分）→
+   * 軸への吸着（target を軸へ射影した点が画面上で AXIS_TRACK_PX 以内なら、その軸）→ なし。
+   * Alt・スナップ切のときは吸着しない。
+   */
+  segmentAxis(target: THREE.Vector3, shift = this.shiftHeld): Axis | null {
+    const a = this.measure.pendingPoint;
+    if (!a || this.tool !== "measure") return null;
+    if (this.axisLock) return this.axisLock;
+    if (shift) return this.measure.dominantAxis(a, target);
+    if (this.snap.isFree) return null;
+    const sa = this.picker.project(a);
+    const st = this.picker.project(target);
+    // 最後の点のすぐ近くでは向きが定まらないので吸着しない
+    if (Math.hypot(st.x - sa.x, st.y - sa.y) < 2 * AXIS_TRACK_PX) return null;
+    let best: Axis | null = null;
+    let bestD = AXIS_TRACK_PX;
+    for (const k of ["x", "y", "z"] as const) {
+      const b = this.measure.endPoint(a, target, k);
+      const sb = this.picker.project(b);
+      // 視線の向きに近い軸（画面上で縮んで見える軸）は、どこでも近く見えるので除く
+      if (Math.hypot(sb.x - sa.x, sb.y - sa.y) < AXIS_TRACK_PX) continue;
+      const d = Math.hypot(sb.x - st.x, sb.y - st.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best;
+  }
+
+  /** スナップの候補を探す対象（スナップを使わないツールは null） */
+  private snapOptions(): { models: boolean; cloud: boolean } | null {
+    if (!this.current) return null;
+    const t = this.tool;
+    if (t === "align") {
+      const needModel = this.align.model.length <= this.align.cloud.length;
+      return { models: needModel, cloud: !needModel };
+    }
+    if (t === "measure" || t === "origin") return { models: true, cloud: true };
+    return null;
+  }
+
+  /**
+   * 計測の作図中、カーソルの下に何も無いときは最後の点を通る軸の線上の点を候補にする
+   * （空中でも軸に沿って測れるように）。固定した軸・Shift では常に、それ以外は軸の線の近くだけ。
+   */
+  private addAxisCandidate(list: SnapCandidate[], clientX: number, clientY: number): SnapCandidate[] {
+    const a = this.measure.pendingPoint;
+    if (!a || this.tool !== "measure") return list;
+    if (list.some((c) => c.kind === "free")) return list;
+    const forced = !!this.axisLock || this.shiftHeld;
+    if (!forced && this.snap.isFree) return list;
+    const ray = this.picker.rayAt(clientX, clientY);
+    const rect = this.viewer.canvas.getBoundingClientRect();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    let best: SnapCandidate | null = null;
+    for (const k of this.axisLock ? [this.axisLock] : (["x", "y", "z"] as const)) {
+      const dir = this.frame.axisVector(k);
+      const L = 1e4;
+      const p = new THREE.Vector3();
+      ray.distanceSqToSegment(a.clone().addScaledVector(dir, -L), a.clone().addScaledVector(dir, L), undefined, p);
+      const s = this.picker.project(p);
+      const c: SnapCandidate = {
+        kind: "axis",
+        source: "axis",
+        point: p,
+        distance: this.viewer.camera.position.distanceTo(p),
+        sx: s.x,
+        sy: s.y,
+        screenDist: Math.hypot(s.x - cx, s.y - cy),
+        detail: k.toUpperCase(),
+      };
+      if (!best || c.screenDist < best.screenDist) best = c;
+    }
+    if (!best || (!forced && best.screenDist > AXIS_TRACK_PX)) return list;
+    return [...list, best];
+  }
+
+  /** 作図中の計測を確定する（折れ線の Enter・ダブルクリック・Esc） */
+  finishMeasure() {
+    this.measure.finish();
+    this.updateToolHint();
+    this.snap.refresh();
   }
 
   async handleClick(e: MouseEvent) {
     const t = this.tool;
-    const snap = t === "measure" || t === "ortho" || t === "origin" || t === "align";
-    let opt = { models: true, cloud: true, snap };
-    if (t === "align") {
-      const needModel = this.align.model.length <= this.align.cloud.length;
-      opt = { models: needModel, cloud: !needModel, snap: true };
+    // 候補を探す間に Shift を離しても、クリックした瞬間の状態で決める
+    const shift = e.shiftKey;
+    // 折れ線: 最後の点をもう一度クリック（ダブルクリック）で確定
+    if (t === "measure" && this.measure.kind === "polyline" && this.measure.pointCount >= 2) {
+      const last = this.picker.project(this.measure.pendingPoint!);
+      const rect = this.viewer.canvas.getBoundingClientRect();
+      if (Math.hypot(e.clientX - rect.left - last.x, e.clientY - rect.top - last.y) <= 5) {
+        this.finishMeasure();
+        return;
+      }
     }
-    const p = await this.picker.pick(e.clientX, e.clientY, opt);
+    let p: Pick | null;
+    let snapLabel: string | null = null;
+    if (this.snap.active) {
+      const c = await this.snap.resolve(e.clientX, e.clientY);
+      p = c ? candidateToPick(c) : null;
+      if (c && c.kind !== "free") snapLabel = SNAP_LABEL[c.kind];
+    } else {
+      p = await this.picker.pick(e.clientX, e.clientY);
+    }
     this.lastPick = p;
     this.showCoord(p);
     if (!p) {
@@ -390,17 +554,18 @@ export class App {
       case "select":
         await this.select(p);
         break;
-      case "measure":
-      case "ortho": {
-        const m = this.measure.add(p.point, p.source === "model" ? "モデル" : "点群", t === "ortho" ? this.orthoAxis : null);
-        this.setHint(m ? "続けて 1点目をクリック（Esc で終了）" : "2点目をクリック");
+      case "measure": {
+        this.measure.add(p.point, sourceName(p), this.segmentAxis(p.point, shift), snapLabel);
+        this.updateToolHint();
+        // 続けて仮の線を出す（カーソルは動いていないので同じ候補を使う）
+        this.snap.refresh();
         break;
       }
       case "origin":
         if (this.originStep === 0) {
           this.frame.set(p.point);
           this.originStep = 1;
-          this.setHint("X 軸の向きにする点をクリック（Esc で向きは変えずに終了）");
+          this.updateToolHint();
         } else {
           this.frame.set(this.frame.origin, p.point);
           this.saveFrame();
@@ -438,7 +603,8 @@ export class App {
     const w = sceneToWorld(this.current, p.point);
     const l = this.frame.toLocal(p.point);
     const f = (v: number) => v.toFixed(3);
-    el.textContent = `${p.source === "model" ? "モデル" : "点群"}  局所 X ${f(l.x)} Y ${f(l.y)} Z ${f(l.z)}  ／ 世界 ${w.map(f).join(", ")}`;
+    const snap = p.snap && p.snap in SNAP_LABEL && p.snap !== "free" && p.snap !== "axis" ? `（${SNAP_LABEL[p.snap as keyof typeof SNAP_LABEL]}）` : "";
+    el.textContent = `${sourceName(p)}${snap}  局所 X ${f(l.x)} Y ${f(l.y)} Z ${f(l.z)}  ／ 世界 ${w.map(f).join(", ")}`;
   }
 
   async select(p: Pick | null) {

@@ -14,6 +14,9 @@ public sealed class MainForm : Form
     private readonly ResourceServer _server;
     private readonly Bridge _bridge;
 
+    /// <summary>WebView2 のブラウザープロセス。再起動の前に終わるのを待つ（同じプロファイルを続けて使うため）。</summary>
+    public int? BrowserProcessId { get; private set; }
+
     public MainForm(AppPaths paths, bool dev, int? debugPort, string? userOverride = null)
     {
         _paths = paths;
@@ -67,6 +70,7 @@ public sealed class MainForm : Form
             var env = await CoreWebView2Environment.CreateAsync(null, profile, options);
             await _web.EnsureCoreWebView2Async(env);
             var core = _web.CoreWebView2;
+            BrowserProcessId = (int)core.BrowserProcessId;
             core.Settings.AreDevToolsEnabled = _dev;
             core.Settings.AreDefaultContextMenusEnabled = _dev;
             core.Settings.IsStatusBarEnabled = false;

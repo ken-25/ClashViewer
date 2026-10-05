@@ -3,6 +3,7 @@ import { dataUrl, fetchRange } from "../host";
 import type { DecodeRequest, DecodeResponse } from "./decoder.worker";
 import DecoderWorker from "./decoder.worker?worker";
 import { ColorMode, PointCloudMaterial, SizeMode, VN_TEX_WIDTH } from "./material";
+import type { CloudSample } from "../scene/snap";
 
 // Potree 2.0 形式（metadata.json / hierarchy.bin / octree.bin）の読込と LOD 選択。
 // 形式の読み方は Potree（BSD-2-Clause, Markus Schütz）の OctreeLoader.js を参考にした。
@@ -533,6 +534,74 @@ export class PotreePointCloud {
       }
     }
     return best;
+  }
+
+  /**
+   * 画面上の位置から radiusPx 以内に見えている点を集める（スナップの端・角を探す元）。
+   * 切断面の外側の点は除く。多すぎるときは maxPoints で打ち切る。
+   */
+  collect(
+    camera: THREE.Camera,
+    ndc: THREE.Vector2,
+    viewport: { width: number; height: number },
+    radiusPx: number,
+    clipPlanes: THREE.Plane[] = [],
+    maxPoints = 40000,
+  ): CloudSample {
+    camera.updateMatrixWorld();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, camera);
+    const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const mx = ((ndc.x + 1) / 2) * viewport.width;
+    const my = ((1 - ndc.y) / 2) * viewport.height;
+    const r2 = radiusPx * radiusPx;
+    // 円の半径ぶん光線から離れた点も拾うので、外接球の判定は 1px の大きさで広げる
+    const e = viewProj.elements;
+    const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+    const pos: number[] = [];
+    const sx: number[] = [];
+    const sy: number[] = [];
+    const dist: number[] = [];
+    const v = new THREE.Vector3();
+    const tanPx = (camera as THREE.PerspectiveCamera).isPerspectiveCamera
+      ? (2 * Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov / 2))) / viewport.height
+      : 0;
+    const orthoPx = (camera as THREE.OrthographicCamera).isOrthographicCamera
+      ? ((camera as THREE.OrthographicCamera).top - (camera as THREE.OrthographicCamera).bottom) /
+        (camera as THREE.OrthographicCamera).zoom /
+        viewport.height
+      : 0;
+    outer: for (const node of this.visibleNodes) {
+      const pts = node.points;
+      if (!pts) continue;
+      const along = Math.max(0, node.sphere.center.clone().sub(ray.ray.origin).dot(ray.ray.direction));
+      const slack = (tanPx * (along + node.sphere.radius) + orthoPx) * radiusPx;
+      if (ray.ray.distanceToPoint(node.sphere.center) > node.sphere.radius * 1.05 + 0.5 + slack) continue;
+      const arr = pts.geometry.getAttribute("position").array as Float32Array;
+      const ox = node.box.min.x;
+      const oy = node.box.min.y;
+      const oz = node.box.min.z;
+      for (let i = 0; i < arr.length; i += 3) {
+        const x = arr[i] + ox;
+        const y = arr[i + 1] + oy;
+        const z = arr[i + 2] + oz;
+        const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+        if (w <= 0) continue;
+        const dx = (((e[0] * x + e[4] * y + e[8] * z + e[12]) / w + 1) / 2) * viewport.width - mx;
+        const dy = ((1 - (e[1] * x + e[5] * y + e[9] * z + e[13]) / w) / 2) * viewport.height - my;
+        if (dx * dx + dy * dy > r2) continue;
+        const depth = (e[2] * x + e[6] * y + e[10] * z + e[14]) / w;
+        if (depth < -1 || depth > 1) continue;
+        v.set(x, y, z);
+        if (clipPlanes.some((p) => p.distanceToPoint(v) < 0)) continue;
+        pos.push(x, y, z);
+        sx.push(dx);
+        sy.push(dy);
+        dist.push(camPos.distanceTo(v));
+        if (dist.length >= maxPoints) break outer;
+      }
+    }
+    return { n: dist.length, pos: Float64Array.from(pos), sx: Float32Array.from(sx), sy: Float32Array.from(sy), dist: Float32Array.from(dist) };
   }
 
   dispose() {

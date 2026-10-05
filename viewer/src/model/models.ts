@@ -237,4 +237,35 @@ export class ModelManager {
     }
     return best;
   }
+
+  /**
+   * スナップの候補（頂点・辺・面）をすべて返す（表示中のモデル・切断で隠れていないものだけ）。
+   * Fragments はカーソルの周り 10px の範囲で探し、最初に当たった面より奥のものは除いて返す。
+   */
+  async snapHits(ndc: THREE.Vector2): Promise<(FRAGS.RaycastResult & { lm: LoadedModel })[]> {
+    const rect = this.viewer.canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((ndc.x + 1) / 2) * this.viewer.canvas.clientWidth + rect.left,
+      ((1 - ndc.y) / 2) * this.viewer.canvas.clientHeight + rect.top,
+    );
+    const planes = this.viewer.renderer.clippingPlanes;
+    const out: (FRAGS.RaycastResult & { lm: LoadedModel })[] = [];
+    // Fragments の raycast は内部の作業用の値を共有するので、モデルごとに順に呼ぶ
+    for (const lm of [...this.models.values()]) {
+      if (!lm.visible) continue;
+      const hits = await lm.model
+        .raycastWithSnapping({
+          camera: this.viewer.camera,
+          mouse,
+          dom: this.viewer.canvas,
+          snappingClasses: [FRAGS.SnappingClass.POINT, FRAGS.SnappingClass.LINE, FRAGS.SnappingClass.FACE],
+        })
+        .catch(() => null);
+      for (const h of hits ?? []) {
+        if (planes.some((p) => p.distanceToPoint(h.point) < -1e-4)) continue;
+        out.push({ ...h, lm });
+      }
+    }
+    return out;
+  }
 }

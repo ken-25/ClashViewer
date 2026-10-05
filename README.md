@@ -124,5 +124,14 @@ scripts/run.ps1 -Root "<データフォルダ>"       # 別のデータフォル
 `dist/干渉ビューア.exe` を直接ダブルクリックすると、インストール版と同じ `%LocalAppData%\ClashViewer\data` を使う。
 `--root` で変わるのはデータの場所だけで、`viewer/`・`tools/` は常に exe の隣のものを使う。
 
-データフォルダの決まり方: `--root`（開発用）＞ `%LocalAppData%\ClashViewer\settings.json` の `dataRoot` ＞ 既定の `%LocalAppData%\ClashViewer\data`。
-C ドライブの空きが足りない PC では、`settings.json` に `{ "dataRoot": "D:\\ClashViewerData" }` のように書いて移す（今は画面からは変えられない）。
+保存先は 2 つあり、画面右上の「設定」（またはフッターの「保存先」）から変えられる。保存すると `%LocalAppData%\ClashViewer\settings.json` に書き、再起動で切り替わる。
+
+| 保存先 | 中身 | 既定 | settings.json のキー |
+|---|---|---|---|
+| プロジェクトフォルダ | `datasets/`・`events/`・`issues/` | `%LocalAppData%\ClashViewer\data` | `dataRoot` |
+| 設定データフォルダ | `app.json`・`members/` | プロジェクトフォルダの `config\` | `configRoot` |
+
+- 決まり方: `--root`（開発用。設定データは `<root>\config`、settings.json は見ない）＞ settings.json ＞ 既定。既定と同じ値はキーを書かない
+- 保存先を変えても、今あるデータは移動しない。設定データ（app.json・メンバー）だけは、新しい場所に無ければ写すかを選べる
+- 設定した保存先が使えない（外付けドライブを外した等）ときは、起動時に「今回だけ既定の保存先で起動するか」を聞く
+- `--root` で起動中でも設定画面から保存はできる（`--root` なしの起動で効く）

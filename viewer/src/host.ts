@@ -18,11 +18,61 @@ export interface HostContext {
   user: string;
   displayName: string;
   members: Member[];
+  /** プロジェクトフォルダ（datasets/・events/・issues/） */
   root: string;
+  /** 設定データフォルダ（app.json・members/） */
+  configRoot: string;
   dev: boolean;
   appVersion: string;
   config: Record<string, any>;
 }
+
+export type FolderKind = "project" | "config";
+
+/** 保存先に選んだフォルダの検査結果（errors があると保存できない） */
+export interface FolderInfo {
+  kind: FolderKind;
+  path: string;
+  exists?: boolean;
+  writable?: boolean;
+  freeBytes?: number;
+  totalBytes?: number;
+  driveType?: string;
+  /** project: 取り込み済みのデータセット数・指摘のファイル数 */
+  datasets?: number;
+  eventFiles?: number;
+  looksLikeProject?: boolean;
+  /** config: app.json の有無・メンバー数 */
+  hasAppJson?: boolean;
+  members?: number;
+  errors: string[];
+  warnings: string[];
+}
+
+/** arg=起動引数 --root / settings=設定画面で保存 / default=既定 / fallback=設定した場所が使えず既定で起動 */
+export type StorageSource = "arg" | "settings" | "default" | "fallback";
+
+export interface StorageLocation {
+  path: string;
+  source: StorageSource;
+  isDefault: boolean;
+  info: FolderInfo;
+}
+
+export interface StorageState {
+  project: StorageLocation;
+  config: StorageLocation;
+  /** settings.json に保存してある値（null=既定）と、次の起動で使う場所 */
+  saved: { dataRoot: string | null; configRoot: string | null; projectPath: string; configPath: string };
+  defaultRoot: string;
+  overridden: boolean;
+  restartPending: boolean;
+  importing: boolean;
+  local: { folder: string; settingsFile: string; logs: string; work: string; webview: string };
+  copied?: number;
+}
+
+export type OpenableFolder = FolderKind | "local" | "logs" | "work";
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
@@ -120,4 +170,13 @@ export const host = {
   eventsRead: (offsets: Record<string, number> | null) =>
     call<{ events: any[]; offsets: Record<string, number> }>("eventsRead", { offsets }),
   openDevTools: () => call("openDevTools"),
+  getStorage: () => call<StorageState>("getStorage"),
+  /** フォルダ選択ダイアログ。やめたら null */
+  pickFolder: (kind: FolderKind, initial?: string) => call<FolderInfo | null>("pickFolder", { kind, initial }),
+  inspectFolder: (kind: FolderKind, path: string) => call<FolderInfo>("inspectFolder", { kind, path }),
+  /** null は既定に戻す。反映は再起動後 */
+  saveStorage: (dataRoot: string | null, configRoot: string | null, copyConfig: boolean) =>
+    call<StorageState>("saveStorage", { dataRoot, configRoot, copyConfig }),
+  openFolder: (kind: OpenableFolder) => call<boolean>("openFolder", { kind }),
+  restartApp: () => call<boolean>("restartApp"),
 };

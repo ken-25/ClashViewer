@@ -211,6 +211,7 @@ try {
   await idle(1500);
   const mp = await findModelHits(3);
   await tool("measure");
+  await page.evaluate(() => window.__cv.app.setMeasureKind("distance"));
   await clickAt(mp[0].fx, mp[0].fy);
   const a1 = await lastPick();
   await clickAt(mp[1].fx, mp[1].fy);
@@ -218,10 +219,12 @@ try {
   const m1 = await page.evaluate(() => {
     const l = window.__cv.app.measure.list;
     const m = l[l.length - 1];
-    return { n: l.length, d: m.distance, comps: m.components.toArray(), src: m.sources, panel: document.getElementById("measures").innerText };
+    return { n: l.length, d: m.distance, axis: m.segments[0].axis, b: m.b.toArray(), src: m.sources, panel: document.getElementById("measures").innerText };
   });
-  const dExp = Math.hypot(a1.point[0] - a2.point[0], a1.point[1] - a2.point[1], a1.point[2] - a2.point[2]);
-  assert(m1.n === 1 && Math.abs(m1.d - dExp) < 1e-6, `2点間距離 ${m1.d.toFixed(3)} m（${m1.src.join("→")}）`);
+  // 軸に吸着した区間は、2 点目をクリック点から軸へ射影した点で測る
+  const end = m1.axis ? m1.b : a2.point;
+  const dExp = Math.hypot(a1.point[0] - end[0], a1.point[1] - end[1], a1.point[2] - end[2]);
+  assert(m1.n === 1 && Math.abs(m1.d - dExp) < 1e-6, `2点間距離 ${m1.d.toFixed(3)} m（${m1.src.join("→")}${m1.axis ? `・${m1.axis.toUpperCase()} に吸着` : ""}）`);
   // 点群の点を拾えること（モデルを隠して同じ位置をクリック）
   // 「表示」タブのモデルの表示切替と同じ操作でモデルを隠し、点群の点を拾う
   const setModelsVisible = (on) =>
@@ -256,9 +259,12 @@ try {
     return { set: f.isSet, origin: f.origin.toArray(), x: f.xAxis.toArray() };
   });
   assert(frame.set && Math.hypot(...frame.origin.map((v, i) => v - o.point[i])) < 1e-9 && Math.abs(frame.x[2]) < 1e-12, "原点と X 軸（水平）を設定");
-  await tool("ortho");
+  // 直交計測: 計測で Shift を押したまま 2 点目（最も大きい成分の軸だけを測る）
+  await tool("measure");
   await clickAt(mp[0].fx, mp[0].fy);
+  await page.keyboard.down("Shift");
   await clickAt(mp[2].fx, mp[2].fy);
+  await page.keyboard.up("Shift");
   const om = await page.evaluate(() => {
     const m = window.__cv.app.measure.list.at(-1);
     return { axis: m.ortho, d: m.distance, comps: m.components.toArray() };
@@ -266,6 +272,20 @@ try {
   const big = om.comps.map(Math.abs);
   const nonAxis = big.filter((_, i) => i !== { x: 0, y: 1, z: 2 }[om.axis]);
   assert(om.axis && Math.abs(Math.max(...big) - om.d) < 1e-9 && nonAxis.every((v) => v < 1e-9), `直交計測 ${om.axis.toUpperCase()} 方向 ${om.d.toFixed(3)} m（他の成分 0）`);
+  // 折れ線: Z 固定の区間＋自由な区間、Enter で確定（区間ごとの長さと合計）
+  await page.evaluate(() => window.__cv.app.setMeasureKind("polyline"));
+  await clickAt(mp[0].fx, mp[0].fy);
+  await page.keyboard.press("z");
+  await clickAt(mp[1].fx, mp[1].fy);
+  await page.keyboard.press("z");
+  await clickAt(mp[2].fx, mp[2].fy);
+  await page.keyboard.press("Enter");
+  const pl = await page.evaluate(() => {
+    const m = window.__cv.app.measure.list.at(-1);
+    return { kind: m.kind, n: m.segments.length, axis0: m.segments[0].axis, c0: m.segments[0].components.toArray(), sum: m.segments.reduce((s, x) => s + x.length, 0), total: m.total };
+  });
+  assert(pl.kind === "polyline" && pl.n === 2 && pl.axis0 === "z" && Math.abs(pl.c0[0]) < 1e-9 && Math.abs(pl.c0[1]) < 1e-9 && Math.abs(pl.sum - pl.total) < 1e-9, `折れ線 2 区間（1 区間目 Z）計 ${pl.total.toFixed(3)} m`);
+  await page.evaluate(() => window.__cv.app.setMeasureKind("distance"));
   // 局所座標の表示（原点で 0）
   const coordText = await page.locator("#st-coord").innerText();
   results.ortho = om;

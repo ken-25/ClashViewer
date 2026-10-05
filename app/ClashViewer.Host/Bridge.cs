@@ -147,6 +147,27 @@ public sealed class Bridge
             case "openDevTools":
                 _core?.OpenDevToolsWindow();
                 return true;
+            case "getStorage":
+                return await Task.Run(GetStorage);
+            case "pickFolder":
+                return await PickFolder(Req(p, "kind"), p["initial"]?.GetValue<string>());
+            case "inspectFolder":
+            {
+                var kind = Kind(Req(p, "kind"));
+                var path = Req(p, "path");
+                return await Task.Run(() => FolderCheck.Inspect(kind, path, _paths, probeWrite: true));
+            }
+            case "saveStorage":
+                return await Task.Run(() => SaveStorage(
+                    p["dataRoot"]?.GetValue<string>(), p["configRoot"]?.GetValue<string>(), p["copyConfig"]?.GetValue<bool>() ?? false));
+            case "openFolder":
+                OpenFolder(Req(p, "kind"));
+                return true;
+            case "restartApp":
+                if (_imports.AnyActive) throw new InvalidOperationException("取込中は再起動できません。取込が終わってから操作してください。");
+                Program.RestartRequested = true;
+                _owner.BeginInvoke(_owner.Close);
+                return true;
             default:
                 throw new NotSupportedException($"不明な操作です: {method}");
         }
@@ -193,6 +214,7 @@ public sealed class Bridge
             ["displayName"] = me?["name"]?.GetValue<string>() ?? _user,
             ["members"] = members,
             ["root"] = _paths.Root,
+            ["configRoot"] = _paths.Config,
             ["dev"] = _dev,
             ["appVersion"] = typeof(Bridge).Assembly.GetName().Version?.ToString(),
             ["config"] = config ?? new JsonObject(),
@@ -221,6 +243,135 @@ public sealed class Bridge
             Multiselect = true,
         };
         return dlg.ShowDialog(_owner) == DialogResult.OK ? Register(dlg.FileNames.ToList()) : new JsonArray();
+    }
+
+    private static string Kind(string kind) => kind switch
+    {
+        FolderCheck.Project or FolderCheck.ConfigKind => kind,
+        _ => throw new ArgumentException($"不明な保存先の種類です: {kind}"),
+    };
+
+    /// <summary>設定画面の「保存先」に出す情報。今使っている場所と、settings.json に保存してある（次の起動で使う）場所。</summary>
+    private JsonObject GetStorage()
+    {
+        var saved = StorageSettings.Load();
+        var savedRoot = saved.DataRoot ?? AppPaths.DefaultRoot;
+        var savedConfig = saved.ConfigRoot ?? AppPaths.DefaultConfigFor(savedRoot);
+        var overridden = _paths.RootSource == "arg";
+        return new JsonObject
+        {
+            ["project"] = new JsonObject
+            {
+                ["path"] = _paths.Root,
+                ["source"] = _paths.RootSource,
+                ["isDefault"] = StorageSettings.SamePath(_paths.Root, AppPaths.DefaultRoot),
+                ["info"] = FolderCheck.Inspect(FolderCheck.Project, _paths.Root, _paths, probeWrite: false),
+            },
+            ["config"] = new JsonObject
+            {
+                ["path"] = _paths.Config,
+                ["source"] = _paths.ConfigSource,
+                ["isDefault"] = StorageSettings.SamePath(_paths.Config, AppPaths.DefaultConfigFor(_paths.Root)),
+                ["info"] = FolderCheck.Inspect(FolderCheck.ConfigKind, _paths.Config, _paths, probeWrite: false),
+            },
+            ["saved"] = new JsonObject
+            {
+                ["dataRoot"] = saved.DataRoot,
+                ["configRoot"] = saved.ConfigRoot,
+                ["projectPath"] = savedRoot,
+                ["configPath"] = savedConfig,
+            },
+            ["defaultRoot"] = AppPaths.DefaultRoot,
+            // --root で起動しているときは settings.json を見ない（保存はできるが、--root なしの起動で効く）
+            ["overridden"] = overridden,
+            // 保存したが、まだ再起動していない
+            ["restartPending"] = !overridden
+                && !(StorageSettings.SamePath(savedRoot, _paths.Root) && StorageSettings.SamePath(savedConfig, _paths.Config)),
+            ["importing"] = _imports.AnyActive,
+            ["local"] = new JsonObject
+            {
+                ["folder"] = AppPaths.Local,
+                ["settingsFile"] = AppPaths.SettingsFile,
+                ["logs"] = _paths.Logs,
+                ["work"] = _paths.Work,
+                ["webview"] = _paths.WebViewData,
+            },
+        };
+    }
+
+    private async Task<JsonNode?> PickFolder(string kind, string? initial)
+    {
+        kind = Kind(kind);
+        string? chosen;
+        // ダイアログは UI スレッドで出す（OnMessage から await 前に呼ばれるので UI スレッド）
+        using (var dlg = new FolderBrowserDialog
+        {
+            Description = kind == FolderCheck.Project
+                ? "プロジェクトフォルダ（点群・モデル・指摘を保存する場所）を選んでください"
+                : "設定データフォルダ（app.json・メンバーを保存する場所）を選んでください",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+        })
+        {
+            var start = !string.IsNullOrWhiteSpace(initial) ? initial : kind == FolderCheck.Project ? _paths.Root : _paths.Config;
+            if (Directory.Exists(start)) dlg.InitialDirectory = start;
+            chosen = dlg.ShowDialog(_owner) == DialogResult.OK ? dlg.SelectedPath : null;
+        }
+        if (string.IsNullOrWhiteSpace(chosen)) return null;
+        return await Task.Run(() => FolderCheck.Inspect(kind, chosen, _paths, probeWrite: true));
+    }
+
+    /// <summary>
+    /// 保存先を settings.json に保存する（null は既定）。反映は再起動後。
+    /// 今あるデータは移動しない。copyConfig なら設定データ（app.json・members）だけ新しい場所へ写す（上書きはしない）。
+    /// </summary>
+    private JsonObject SaveStorage(string? dataRoot, string? configRoot, bool copyConfig)
+    {
+        if (_imports.AnyActive) throw new InvalidOperationException("取込中は保存先を変えられません。取込が終わってから操作してください。");
+        if (string.IsNullOrWhiteSpace(dataRoot)) dataRoot = null;
+        if (string.IsNullOrWhiteSpace(configRoot)) configRoot = null;
+
+        var project = FolderCheck.Inspect(FolderCheck.Project, dataRoot ?? AppPaths.DefaultRoot, _paths, probeWrite: false);
+        var errors = (project["errors"] as JsonArray)!.Select(e => $"プロジェクトフォルダ: {e}").ToList();
+        if (errors.Count > 0) throw new InvalidOperationException(string.Join("\n", errors));
+        var newRoot = project["path"]!.GetValue<string>();
+        var config = FolderCheck.Inspect(FolderCheck.ConfigKind, configRoot ?? AppPaths.DefaultConfigFor(newRoot), _paths, probeWrite: false);
+        errors = (config["errors"] as JsonArray)!.Select(e => $"設定データフォルダ: {e}").ToList();
+        var newConfig = config["path"]!.GetValue<string>();
+        foreach (var sub in new[] { "datasets", "events", "issues" })
+            if (StorageSettings.IsUnder(newConfig, Path.Combine(newRoot, sub)))
+                errors.Add($"設定データフォルダ: プロジェクトフォルダの {sub} の中には置けません。");
+        if (errors.Count > 0) throw new InvalidOperationException(string.Join("\n", errors));
+
+        // 実際に作って書けるかを確かめてから保存する（起動できない設定を残さない）
+        foreach (var (dir, label) in new[] { (newRoot, "プロジェクトフォルダ"), (newConfig, "設定データフォルダ") })
+        {
+            var (ok, message) = FolderCheck.ProbeWrite(dir);
+            if (!ok) throw new InvalidOperationException($"{label}に書き込めません: {dir}\n{message}");
+        }
+        var copied = copyConfig ? FolderCheck.CopyConfig(_paths.Config, newConfig) : 0;
+        StorageSettings.Save(dataRoot is null ? null : newRoot, configRoot is null ? null : newConfig);
+        var result = GetStorage();
+        result["copied"] = copied;
+        return result;
+    }
+
+    /// <summary>エクスプローラーで開く。開けるのは決まった保存先だけ（画面から任意のパスは渡さない）。</summary>
+    private void OpenFolder(string kind)
+    {
+        var dir = kind switch
+        {
+            "project" => _paths.Root,
+            "config" => _paths.Config,
+            "local" => AppPaths.Local,
+            "logs" => _paths.Logs,
+            "work" => _paths.Work,
+            _ => throw new ArgumentException($"不明なフォルダです: {kind}"),
+        };
+        if (!Directory.Exists(dir)) throw new DirectoryNotFoundException($"フォルダがありません: {dir}");
+        var psi = new System.Diagnostics.ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+        psi.ArgumentList.Add(dir);
+        System.Diagnostics.Process.Start(psi);
     }
 
     private JsonArray Register(List<string> paths)

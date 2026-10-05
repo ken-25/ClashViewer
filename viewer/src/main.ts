@@ -12,6 +12,7 @@ import { renderDiff } from "./ui/diffPanel";
 import { $, showMessage } from "./ui/dom";
 import { IssuePanel } from "./ui/issuePanel";
 import { Navigator } from "./ui/navigator";
+import { SettingsDialog } from "./ui/settingsDialog";
 import { renderDisplay, renderMeasures, renderProps, renderToolPanel, syncToolPanel, updatePcStats } from "./ui/viewPanels";
 
 async function main() {
@@ -22,6 +23,12 @@ async function main() {
   const app = new App();
   app.ctx = await host.getContext();
   $("#st-user").textContent = `${app.ctx.displayName}（${app.ctx.user}）`;
+  const settings = new SettingsDialog(app);
+  const stRoot = $("#st-root");
+  stRoot.textContent = `保存先: ${app.ctx.root}`;
+  stRoot.title = `プロジェクトフォルダ: ${app.ctx.root}\n設定データフォルダ: ${app.ctx.configRoot}\n（クリックで設定を開く）`;
+  stRoot.addEventListener("click", () => void settings.open());
+  $("#btn-settings").addEventListener("click", () => void settings.open());
   const budget = Number(app.ctx.config?.pointBudget);
   if (!localStorage.getItem("pointBudget") && budget > 0) app.pointBudget = budget;
 
@@ -107,10 +114,34 @@ async function main() {
     if (e.button !== 0 || !down) return;
     const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
     down = null;
-    if (moved > 4 || !app.current) return;
+    if (moved > 4 || !app.current) {
+      // 回した・動かしたあとは、止まった位置で候補を探し直す
+      app.snap.request(e.clientX, e.clientY);
+      return;
+    }
     void app.handleClick(e).catch((err) => console.error(err));
   });
+  // スナップの候補（計測・原点設定・3点合わせ）。ボタンを押したまま（回転・移動中）は探さない
+  canvas.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;
+    if (e.buttons !== 0) {
+      app.snap.leave();
+      return;
+    }
+    app.snap.request(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointerleave", () => app.snap.leave());
+  window.addEventListener("blur", () => {
+    app.snap.setFreeHeld(false);
+    app.setShiftHeld(false);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Alt") app.snap.setFreeHeld(false);
+    if (e.key === "Shift") app.setShiftHeld(false);
+  });
   canvas.addEventListener("dblclick", async (e) => {
+    // 計測中のダブルクリックは折れ線の確定に使う（注視点は動かさない）
+    if (app.tool === "measure") return;
     const p = await app.picker.pick(e.clientX, e.clientY);
     if (!p) return;
     // 注視点をクリック位置へ（そこを中心に回る）
@@ -121,12 +152,45 @@ async function main() {
   });
   window.addEventListener("keydown", (e) => {
     if ((e.target as HTMLElement)?.closest("input,textarea,select")) return;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    const key = e.key.toLowerCase();
+    const measuring = app.tool === "measure" && app.measure.hasPending;
     if (e.key === "Escape") {
-      app.measure.cancel();
-      app.setTool("select");
-    } else if (app.tool === "ortho" && ["x", "y", "z"].includes(e.key.toLowerCase())) {
-      app.orthoAxis = e.key.toLowerCase() as "x" | "y" | "z";
+      // 計測の作図中なら、距離は 1 点目を取り消し、折れ線はそこまでで確定する（ツールはそのまま）。
+      // もう一度でツールを終える
+      if (measuring) {
+        if (app.measure.kind === "polyline") app.finishMeasure();
+        else {
+          app.measure.cancel();
+          app.updateToolHint();
+          app.snap.refresh();
+        }
+      } else {
+        app.setTool("select");
+      }
+    } else if (e.key === "Enter" && measuring) {
+      e.preventDefault();
+      app.finishMeasure();
+    } else if (e.key === "Backspace" && measuring) {
+      e.preventDefault();
+      app.measure.undo();
+      app.updateToolHint();
+      app.snap.refresh();
+    } else if (e.key === "Shift" && app.tool === "measure") {
+      app.setShiftHeld(true);
+    } else if (e.key === "Tab" && app.snap.active && !e.ctrlKey && !e.altKey) {
+      // スナップ候補の切替（フォーカスは移さない）
+      e.preventDefault();
+      app.snap.cycle(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Alt" && app.snap.active) {
+      // 押している間はフリー（Alt 単独でメニューへフォーカスが移らないように止める）
+      e.preventDefault();
+      app.snap.setFreeHeld(true);
+    } else if (key === "s" && plain && !e.shiftKey && app.snap.active) {
+      app.snap.setEnabled(!app.snap.enabled);
       renderMeasures(app);
+    } else if (app.tool === "measure" && plain && !e.shiftKey && ["x", "y", "z"].includes(key)) {
+      app.toggleAxisLock(key as "x" | "y" | "z");
     } else if (e.key.toLowerCase() === "p" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       toggleProjection();
     } else if (e.key === "F12" && app.ctx.dev) {
@@ -170,7 +234,7 @@ async function main() {
   if (start) await app.openDataset(start).catch((e) => showMessage("開けません", String(e)));
 
   // E2E テスト・計測用（開発モードのみ）
-  if (app.ctx.dev) (window as any).__cv = { app, host, data, issues, THREE, attributeSignature, solveRigid };
+  if (app.ctx.dev) (window as any).__cv = { app, host, data, issues, settings, THREE, attributeSignature, solveRigid };
 }
 
 main().catch((e) => {
