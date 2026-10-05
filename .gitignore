@@ -22,7 +22,7 @@ converter/src/clash_converter/_version.py
 
 # PyInstaller / Nuitka のビルド成果物
 build/
-# インストーラー（scripts/build.ps1 -Msi の出力）
+# インストーラー（scripts/release.ps1 の出力）
 release/
 # 配布一式（scripts/build.ps1 の出力。共有フォルダへ上書きコピーするものだけ）
 dist/

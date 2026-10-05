@@ -32,11 +32,16 @@
 
       <!-- 左: 何を見ているか（レイヤー）と、作業で残ったもの（計測・指摘・差分） -->
       <aside id="left">
+        <!-- 折りたたんだときは細い帯だけ残す（押すと開く） -->
+        <button class="panel-strip" data-panel="left" aria-controls="left" aria-expanded="true" title="左のパネルを開く">
+          <span aria-hidden="true">»</span><span class="strip-label">レイヤー・計測・指摘・差分</span>
+        </button>
         <nav class="tabs" role="tablist">
           <button role="tab" data-tab="layers" class="active">レイヤー</button>
           <button role="tab" data-tab="measures">計測 <span id="measure-count" class="badge"></span></button>
           <button role="tab" data-tab="issues">指摘 <span id="issue-count" class="badge"></span></button>
           <button role="tab" data-tab="diff">差分</button>
+          <button class="panel-close" data-panel="left" aria-controls="left" title="左のパネルを折りたたむ（3D 画面を広げる）" aria-label="左のパネルを折りたたむ">«</button>
         </nav>
         <section id="tab-layers" class="tab active" role="tabpanel"></section>
         <section id="tab-measures" class="tab" role="tabpanel"></section>
@@ -79,6 +84,10 @@
 
       <!-- 右: いま何をしているか（選んだツールの設定と結果、切断の設定） -->
       <aside id="right">
+        <button class="panel-strip" data-panel="right" aria-controls="right" aria-expanded="true" title="右のパネルを開く">
+          <span aria-hidden="true">«</span><span id="right-strip-label" class="strip-label">属性</span>
+        </button>
+        <button class="panel-close" data-panel="right" aria-controls="right" title="右のパネルを折りたたむ（3D 画面を広げる）" aria-label="右のパネルを折りたたむ">»</button>
         <section id="props"></section>
         <section id="tool-opts" class="hidden"></section>
         <section id="clip-panel" class="clip-panel hidden"></section>

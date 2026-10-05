@@ -124,6 +124,21 @@ async function main() {
   projBtn.addEventListener("click", toggleProjection);
   if (localStorage.getItem("projection") === "orthographic") app.viewer.setProjection("orthographic");
   syncProjection(app.viewer.projection);
+  // 左右パネルの折りたたみ（狭い画面で 3D 画面を広げる）。状態はこの PC に覚える
+  const appEl = $("#app");
+  const setPanel = (side: "left" | "right", collapsed: boolean, focus = false) => {
+    appEl.classList.toggle(`${side}-collapsed`, collapsed);
+    document.querySelectorAll<HTMLElement>(`.panel-strip[data-panel=${side}]`).forEach((b) => b.setAttribute("aria-expanded", String(!collapsed)));
+    localStorage.setItem(`panel:${side}`, collapsed ? "collapsed" : "open");
+    if (focus) document.querySelector<HTMLElement>(`${collapsed ? ".panel-strip" : ".panel-close"}[data-panel=${side}]`)?.focus();
+  };
+  for (const side of ["left", "right"] as const) {
+    setPanel(side, localStorage.getItem(`panel:${side}`) === "collapsed");
+    document.querySelector(`.panel-close[data-panel=${side}]`)?.addEventListener("click", () => setPanel(side, true, true));
+    document.querySelector(`.panel-strip[data-panel=${side}]`)?.addEventListener("click", () => setPanel(side, false, true));
+  }
+  // 折りたたんだ側のタブ・指摘を開く操作（3D の指摘ピンなど）が来たら開く
+  app.on("issue:open", () => setPanel("left", false));
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
       document.querySelectorAll("[data-tab]").forEach((x) => {

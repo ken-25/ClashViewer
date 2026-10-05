@@ -141,8 +141,10 @@ h3 {
 }
 
 #app {
+  --left-w: 320px;
+  --right-w: 300px;
   display: grid;
-  grid-template-columns: 320px 1fr 300px;
+  grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w);
   grid-template-rows: 42px 1fr 24px;
   grid-template-areas:
     "tb tb tb"
@@ -190,6 +192,57 @@ h3 {
 #right {
   grid-area: right;
   border-left: 1px solid var(--line);
+}
+/* 左右パネルの折りたたみ。折りたたむと細い帯（押すと開く）だけにして 3D 画面を広げる */
+#app.left-collapsed {
+  --left-w: 28px;
+}
+#app.right-collapsed {
+  --right-w: 28px;
+}
+.panel-close {
+  flex: none !important;
+  padding: 2px 7px;
+  color: var(--muted);
+}
+#right > .panel-close {
+  float: right;
+  margin: 8px 0 0 6px;
+}
+.panel-strip {
+  display: none;
+}
+#app.left-collapsed #left,
+#app.right-collapsed #right {
+  padding: 0;
+  overflow: hidden;
+}
+#app.left-collapsed #left > :not(.panel-strip),
+#app.right-collapsed #right > :not(.panel-strip) {
+  display: none !important;
+}
+#app.left-collapsed #left > .panel-strip,
+#app.right-collapsed #right > .panel-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+}
+.panel-strip:hover {
+  background: var(--panel2) !important;
+  color: var(--text) !important;
+}
+.strip-label {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .tabs {
   position: sticky;
@@ -548,17 +601,105 @@ h3 {
   background: #1f2329;
 }
 
-/* レイヤー */
-.layer {
-  border-bottom: 1px solid var(--line);
-  padding: 6px 0;
+/* レイヤー: 点群・モデル・階・クラスを同じ形の行にそろえる（[開閉] 名前 件数 [表示][半透明][移動]） */
+.layer-tree {
+  margin-top: 4px;
 }
-.classes {
-  margin-left: 18px;
+.layer-head,
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+}
+.layer-head {
+  min-height: 18px;
+  padding-left: 20px;
+  font-size: 10px;
+}
+.layer-head .ico-btn {
+  text-align: center;
+}
+.layer-row {
+  border-radius: 4px;
+}
+.layer-row:hover {
+  background: var(--panel2);
+}
+.layer-row.lv0 {
+  font-weight: 600;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
+}
+.layer-row.lv2 {
+  padding-left: 14px;
   font-size: 12px;
 }
-.classes .row {
-  margin: 1px 0;
+.layer-row.lv3 {
+  padding-left: 28px;
+  font-size: 12px;
+}
+.layer-row.off .name,
+.layer-row.off .count {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.layer-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-row .count {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: normal;
+  margin-right: 4px;
+}
+.twisty {
+  flex: none;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ico-btn {
+  flex: none;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+.ico-btn:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+.ico-btn.on {
+  color: var(--text);
+}
+button.ico-btn[aria-pressed="false"] {
+  color: #6b737e;
+}
+.ico-btn.placeholder {
+  display: inline-block;
+}
+.ico {
+  display: inline-flex;
+}
+.layer-body {
+  padding: 2px 0 6px 20px;
+}
+.layer-body.lv2 {
+  padding: 0;
 }
 
 /* 指摘 */
@@ -575,6 +716,19 @@ h3 {
 }
 .issue-item .t {
   font-weight: 600;
+}
+.issue-nav {
+  /* タブ（sticky・高さ約 43px）のすぐ下に留める */
+  position: sticky;
+  top: 43px;
+  z-index: 1;
+  background: var(--panel);
+  margin: 0;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+.issue-detail h2:first-child {
+  margin-top: 6px;
 }
 .issue-detail img {
   max-width: 100%;

@@ -1,95 +1,130 @@
 <#
 .SYNOPSIS
-  配布一式（干渉ビューア.exe・viewer/・tools/）を dist/ に作り、インストーラー release/干渉ビューア-<版>.msi を作る。
+  開発用ビルド。画面・exe・変換エンジンのうち変わったものだけ作り直し、dist/ を実機確認できる状態にする。
 
 .DESCRIPTION
+  何を変えたかを気にせず、これ 1 本を実行すれば dist/ が最新になる（起動は scripts/run.ps1）。
+  - 画面（viewer/）: 毎回 型チェック + Vite ビルド
+  - exe（app/ClashViewer.Host）: ソース・csproj・VERSION が前回より新しいときだけ dotnet publish
+  - 変換エンジン（converter/）: ソース・依存・VERSION が前回より新しいときだけ PyInstaller
+  MSI まで作るのは scripts/release.ps1（全部作り直す）。
+
   バージョンはリポジトリ直下の VERSION が唯一の正（SSOT）。exe（csproj が直接読む）・変換エンジン（_version.py を生成）・
   MSI（wix build -d Version）はすべてここから決まる。版を上げるときは VERSION だけを書き換える。
+  dist/ にはデータ（config/・datasets/・events/・issues/）を入れない。開発・E2E のデータは dev/share に置く。
 
-  dist/ はこのスクリプトが毎回作り直す（中身は全部消える）。データ（config/・datasets/・events/・issues/）は
-  入れない。開発・E2E で使うデータは dev/share に置く（README 参照）。
-  リリースは release/ の MSI を配る（利用者がダブルクリックで入れる。管理者権限は要らない）。
-
-.PARAMETER SkipConverter
-  変換エンジン（PyInstaller）の再ビルドを省き、前回の build/converter-dist を使う（無い・版が違うときはビルドする）。
-.PARAMETER SkipHost
-  ビューア exe の再ビルドを省き、前回の build/host を使う（無い・版が違うときはビルドする）。
-.PARAMETER SkipMsi
-  MSI を作らない（dist/ だけ作る。開発・E2E 用の短縮）。
+.PARAMETER Release
+  リリース用。dist/ を空にし、すべてを作り直してから release/干渉ビューア-<版>.msi を作る。
+  直接付けずに scripts/release.ps1 を使う。
 #>
 param(
-  [switch]$SkipConverter,
-  [switch]$SkipHost,
-  [switch]$SkipMsi
+  [switch]$Release
 )
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $dist = Join-Path $repo "dist"
+$sw = [Diagnostics.Stopwatch]::StartNew()
 
 # ===== バージョン（SSOT） =====
-$version = (Get-Content (Join-Path $repo "VERSION") -Raw).Trim()
+$versionFile = Join-Path $repo "VERSION"
+$version = (Get-Content $versionFile -Raw).Trim()
 # MSI の ProductVersion の制約（major.minor.build がそれぞれ 255・255・65535 まで）に合わせて x.y.z に限る
 if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)$' -or [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535) {
   throw "VERSION は x.y.z（x,y は 0〜255、z は 0〜65535）で書く: '$version'"
 }
-Write-Host "== バージョン $version"
+Write-Host ("== バージョン {0}（{1}）" -f $version, $(if ($Release) { "リリース" } else { "開発" }))
 
-# dist/ は作り直す。データが紛れていたら消さずに止める（以前は dist/share をデータ置き場にも使っていたため）
+# 指定したファイル群のうち一番新しい更新日時（bin/obj/__pycache__ は見ない）
+function Get-Newest([string[]]$paths) {
+  $files = foreach ($p in $paths) {
+    if (Test-Path $p -PathType Container) {
+      Get-ChildItem $p -Recurse -File | Where-Object { $_.FullName -notmatch '\\(bin|obj|__pycache__)\\' }
+    } elseif (Test-Path $p) { Get-Item $p }
+  }
+  ($files | Measure-Object LastWriteTimeUtc -Maximum).Maximum
+}
+
+# dist/ の exe・変換エンジンが動いていると上書きできないので、先に止める
+$running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($dist + "\", "OrdinalIgnoreCase") }
+if ($running) {
+  throw "dist/ のアプリが起動中です（$(($running.ProcessName | Sort-Object -Unique) -join ', ')）。閉じてから実行してください"
+}
+
+# データが紛れていたら消さずに止める（以前は dist/share をデータ置き場にも使っていたため）
 if (Test-Path $dist) {
   $data = Get-ChildItem $dist -Recurse -Directory -Depth 1 | Where-Object { $_.Name -in "datasets", "events", "issues", "config" }
   if ($data) {
     throw "dist/ にデータのフォルダがあります（$($data.FullName -join ', ')）。dev/share へ移してから実行してください"
   }
-  Remove-Item $dist -Recurse -Force
+  if ($Release) { Remove-Item $dist -Recurse -Force }
 }
 New-Item -ItemType Directory -Force $dist | Out-Null
 
-Write-Host "== viewer (HTML/JS)"
+# ===== 画面 =====
+Write-Host "== 画面 (viewer/)"
 Push-Location (Join-Path $repo "viewer")
 try {
-  if (-not (Test-Path node_modules)) { npm ci }
+  if (-not (Test-Path node_modules)) { npm ci; if ($LASTEXITCODE -ne 0) { throw "npm ci に失敗" } }
+  npm run typecheck --silent
+  if ($LASTEXITCODE -ne 0) { throw "画面の型エラー" }
   $env:CV_OUT_DIR = Join-Path $dist "viewer"
-  npm run build
-  if ($LASTEXITCODE -ne 0) { throw "viewer のビルドに失敗" }
+  npm run build --silent -- --logLevel warn
+  if ($LASTEXITCODE -ne 0) { throw "画面のビルドに失敗" }
 } finally {
   Remove-Item Env:CV_OUT_DIR -ErrorAction SilentlyContinue
   Pop-Location
 }
 
-Write-Host "== host (干渉ビューア.exe)"
+# ===== exe =====
+$hostSrc = Join-Path $repo "app\ClashViewer.Host"
 $pub = Join-Path $repo "build\host"
 $hostExe = Join-Path $pub "ClashViewer.exe"
-# 前回の exe を使い回すのは、版が VERSION と同じときだけ
-$hostStale = -not (Test-Path $hostExe) -or ((Get-Item $hostExe).VersionInfo.ProductVersion -split '\+')[0] -ne $version
-if (-not $SkipHost -or $hostStale) {
-  dotnet publish (Join-Path $repo "app\ClashViewer.Host\ClashViewer.Host.csproj") -c Release -o $pub --nologo -v quiet
-  if ($LASTEXITCODE -ne 0) { throw "host のビルドに失敗" }
+$hostStale = $Release -or -not (Test-Path $hostExe) -or
+  ((Get-Item $hostExe).VersionInfo.ProductVersion -split '\+')[0] -ne $version -or
+  (Get-Newest @($hostSrc, $versionFile)) -gt (Get-Item $hostExe).LastWriteTimeUtc
+if ($hostStale) {
+  Write-Host "== exe (干渉ビューア.exe)"
+  dotnet publish (Join-Path $hostSrc "ClashViewer.Host.csproj") -c Release -o $pub --nologo -v quiet
+  if ($LASTEXITCODE -ne 0) { throw "exe のビルドに失敗" }
+  # 出力が変わらず日時が古いままだと毎回作り直しになるので、作った時刻にそろえる
+  (Get-Item $hostExe).LastWriteTimeUtc = [DateTime]::UtcNow
+} else {
+  Write-Host "== exe: 変更なし（前回のビルドを使う）"
 }
-Copy-Item $hostExe (Join-Path $dist "干渉ビューア.exe")
+Copy-Item $hostExe (Join-Path $dist "干渉ビューア.exe") -Force
 
-Write-Host "== tools/PotreeConverter"
+# ===== tools/PotreeConverter =====
 $pcSrc = Get-ChildItem (Join-Path $repo "third_party\PotreeConverter") -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $pcSrc) { throw "third_party/PotreeConverter がありません（scripts/fetch-third-party.ps1 を実行）" }
 $pcDst = Join-Path $dist "tools\PotreeConverter"
-New-Item -ItemType Directory -Force $pcDst | Out-Null
-# 変換に要るのは exe と laszip.dll だけ。resources/page_template（約 400 ファイル・47 MB）は
-# --generate-page 用の Web ビューア一式で使わないので入れない。ライセンス表示は残す
-foreach ($name in "PotreeConverter.exe", "laszip.dll") {
-  $f = Join-Path $pcSrc.FullName $name
-  if (-not (Test-Path $f)) { throw "third_party/PotreeConverter に $name がありません" }
-  Copy-Item $f $pcDst
+if (-not (Test-Path (Join-Path $pcDst "PotreeConverter.exe"))) {
+  Write-Host "== tools/PotreeConverter"
+  New-Item -ItemType Directory -Force $pcDst | Out-Null
+  # 変換に要るのは exe と laszip.dll だけ。resources/page_template（約 400 ファイル・47 MB）は
+  # --generate-page 用の Web ビューア一式で使わないので入れない。ライセンス表示は残す
+  foreach ($name in "PotreeConverter.exe", "laszip.dll") {
+    $f = Join-Path $pcSrc.FullName $name
+    if (-not (Test-Path $f)) { throw "third_party/PotreeConverter に $name がありません" }
+    Copy-Item $f $pcDst
+  }
+  Copy-Item (Join-Path $pcSrc.FullName "licenses") $pcDst -Recurse
 }
-Copy-Item (Join-Path $pcSrc.FullName "licenses") $pcDst -Recurse
 
-Write-Host "== tools/converter (PyInstaller onedir)"
+# ===== tools/converter（PyInstaller onedir） =====
+$convDir = Join-Path $repo "converter"
 $convBuilt = Join-Path $repo "build\converter-dist\converter"
 $convStamp = Join-Path $repo "build\converter-dist\converter.version"
-$convStale = -not (Test-Path (Join-Path $convBuilt "converter.exe")) -or -not (Test-Path $convStamp) -or (Get-Content $convStamp -Raw).Trim() -ne $version
-if (-not $SkipConverter -or $convStale) {
+$convInputs = @((Join-Path $convDir "src"), (Join-Path $convDir "pyi_entry.py"), (Join-Path $convDir "pyproject.toml"), (Join-Path $convDir "uv.lock"), $versionFile)
+$convStale = $Release -or -not (Test-Path (Join-Path $convBuilt "converter.exe")) -or -not (Test-Path $convStamp) -or
+  (Get-Content $convStamp -Raw).Trim() -ne $version -or
+  (Get-Newest $convInputs) -gt (Get-Item $convStamp).LastWriteTimeUtc
+$convDst = Join-Path $dist "tools\converter"
+if ($convStale) {
+  Write-Host "== 変換エンジン (tools/converter)"
   # exe 化すると VERSION ファイルを読めないので、版を埋め込んだモジュールを生成する（コミットしない）
-  $verPy = Join-Path $repo "converter\src\clash_converter\_version.py"
+  $verPy = Join-Path $convDir "src\clash_converter\_version.py"
   Set-Content $verPy "# scripts/build.ps1 が VERSION から生成する。編集しない`nVERSION = `"$version`"`n" -Encoding utf8NoBOM
-  Push-Location (Join-Path $repo "converter")
+  Push-Location $convDir
   try {
     uv sync --frozen 2>$null; if ($LASTEXITCODE -ne 0) { uv sync }
     uv run pyinstaller --noconfirm --clean --onedir --console --name converter `
@@ -102,23 +137,36 @@ if (-not $SkipConverter -or $convStale) {
     Remove-Item $verPy -ErrorAction SilentlyContinue
   }
   Set-Content $convStamp $version -Encoding utf8NoBOM
+} else {
+  Write-Host "== 変換エンジン: 変更なし（前回のビルドを使う）"
 }
 $convVer = (& (Join-Path $convBuilt "converter.exe") --version).Trim()
 if ($convVer -ne $version) { throw "変換エンジンの版（$convVer）が VERSION（$version）と違います" }
-Copy-Item $convBuilt (Join-Path $dist "tools\converter") -Recurse
+# dist/ 側が前回のビルドと同じなら写し直さない（約 100 MB あるため）
+$convDstStamp = Join-Path $convDst ".build-stamp"
+$builtStamp = (Get-Item $convStamp).LastWriteTimeUtc.Ticks.ToString()
+if ($convStale -or -not (Test-Path $convDstStamp) -or (Get-Content $convDstStamp -Raw).Trim() -ne $builtStamp) {
+  if (Test-Path $convDst) { Remove-Item $convDst -Recurse -Force }
+  Copy-Item $convBuilt $convDst -Recurse
+  if (-not $Release) { Set-Content $convDstStamp $builtStamp -Encoding utf8NoBOM }
+}
 
 $size = (Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("dist: {0}（{1:N0} MB）" -f $dist, ($size / 1MB))
 
-if ($SkipMsi) { return }
+if (-not $Release) {
+  Write-Host ("完了（{0:N0} 秒）。起動は scripts/run.ps1" -f $sw.Elapsed.TotalSeconds)
+  return
+}
 
-Write-Host "== installer (MSI)"
+# ===== MSI =====
+Write-Host "== インストーラー (MSI)"
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
   throw "wix がありません（dotnet tool install --global wix --version 7.0.0）"
 }
-$release = Join-Path $repo "release"
-New-Item -ItemType Directory -Force $release | Out-Null
-$msi = Join-Path $release "干渉ビューア-$version.msi"
+$releaseDir = Join-Path $repo "release"
+New-Item -ItemType Directory -Force $releaseDir | Out-Null
+$msi = Join-Path $releaseDir "干渉ビューア-$version.msi"
 # ICE38/64/91 はユーザープロファイルへ入れる部品に「HKCU の値を KeyPath にする」「フォルダごとに RemoveFolder」を求める。
 # ローミングしないユーザーごとのインストールでは不要で、フォルダ丸ごとの取り込み（Files）とは両立しないので外す。
 # ICE61 は同じ版での上書き（AllowSameVersionUpgrades）を許したことへの警告
@@ -128,4 +176,4 @@ if ($LASTEXITCODE -ne 0) { throw "MSI のビルドに失敗" }
 wix msi validate $msi -nologo -sice ICE38 -sice ICE64 -sice ICE91 -sice ICE61
 if ($LASTEXITCODE -ne 0) { throw "MSI の検証に失敗" }
 Remove-Item ([IO.Path]::ChangeExtension($msi, ".wixpdb")) -ErrorAction SilentlyContinue
-Write-Host ("完了: {0}（{1:N0} MB）。これを配る" -f $msi, ((Get-Item $msi).Length / 1MB))
+Write-Host ("完了（{0:N0} 秒）: {1}（{2:N0} MB）。これを配る" -f $sw.Elapsed.TotalSeconds, $msi, ((Get-Item $msi).Length / 1MB))

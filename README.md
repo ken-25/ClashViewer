@@ -54,16 +54,24 @@ uv sync --project converter        # 変換エンジンの依存
 
 ## ビルド・リリース
 
-配布一式（`干渉ビューア.exe`・`viewer/`・`tools/`）を `dist/` に作り、それを入れた MSI を `release/` に作る。
+使うコマンドは 3 つだけ。
 
 ```powershell
-scripts/build.ps1                  # dist/ を作り直し、release/干渉ビューア-<版>.msi を作る
-scripts/build.ps1 -SkipMsi         # dist/ だけ（開発・E2E 用）
-scripts/build.ps1 -SkipConverter   # 変換エンジンは前回のビルド（build/converter-dist）を使う（版が違えば作り直す）
-scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（build/host）を使う（版が違えば作り直す）
+
+# 1. 開発用ビルド（画面・exe・変換エンジンのどれを変えてもこれで dist/ が最新になる）
+scripts/build.ps1
+
+# 2. dist/ の exe を開発モードで起動（データは dev/share）
+scripts/run.ps1
+
+# 3. 全部作り直して release/干渉ビューア-<版>.msi を作る
+scripts/release.ps1
+
 ```
 
-`build.ps1` が行うこと: `VERSION` を検査 → `dist/` を空にする → 画面を Vite でビルド → exe を `dotnet publish -c Release` → PotreeConverter と変換エンジン（PyInstaller onedir）を `tools/` に配置 → `wix build` で MSI を作り `wix msi validate` で検査。
+- `build.ps1`: 画面は毎回 型チェック + Vite ビルド。exe と変換エンジンは、ソース・依存・`VERSION` が前回のビルドより新しいときだけ作り直す（変わっていなければ数十秒で終わる）。dist/ のアプリが起動中なら止まるので、閉じてから実行する
+- `release.ps1`: `dist/` を空にし、画面・exe（`dotnet publish -c Release`）・PotreeConverter・変換エンジン（PyInstaller onedir）をすべて作り直してから `wix build` で MSI を作り `wix msi validate` で検査する
+
 `dist/` にはデータ（`config/`・`datasets/`・`events/`・`issues/`）を入れない。データのフォルダが見つかったら消さずに止まる。
 
 ### バージョン
@@ -81,21 +89,13 @@ scripts/build.ps1 -SkipHost        # ビューア exe は前回のビルド（bu
 - アンインストールしてもデータ（`%LocalAppData%\ClashViewer`）は残る
 - `installer/ClashViewer.wxs` の `UpgradeCode` は変えない（変えると別製品として二重に入る）
 
-### 画面だけ作り直す（開発用の短縮）
+## 個別のコマンド
 
-exe は隣の `viewer/` フォルダ（開発では `dist/viewer`）の画面を表示する。画面の変更を exe で確かめるときは、`dist/viewer` を作り直してから exe を起動し直す。
-
-```powershell
-scripts/build-viewer.ps1           # 型チェック + Vite ビルドして dist/viewer に置く
-```
-
-## 開発コマンド
-
-Vite の出力先は環境変数 `CV_OUT_DIR`（未指定なら `viewer/dist`）。`scripts/build.ps1`・`scripts/build-viewer.ps1` は `dist/viewer` を指定して呼ぶ。
+普段は上の 3 つで足りる。部分的に回したいときだけ使う。
+Vite の出力先は環境変数 `CV_OUT_DIR`（未指定なら `viewer/dist`）。`scripts/build.ps1` は `dist/viewer` を指定して呼ぶ。
 
 | 対象 | コマンド |
 |---|---|
-| 画面: ビルド（`dist/viewer` へ） | `scripts/build-viewer.ps1` |
 | 画面: 変更監視ビルド（`dist/viewer` へ） | `$env:CV_OUT_DIR = "$PWD\dist\viewer"; npm --prefix viewer run watch`（リポジトリ直下で実行） |
 | 画面: 型チェック | `npm --prefix viewer run typecheck` |
 | 画面: 単体テスト | `npm --prefix viewer test` |
@@ -123,6 +123,7 @@ node e2e/perf.mjs <データセットのフォルダ>              # 性能（--
 ```powershell
 scripts/run.ps1                              # dist/ の exe を dev/share のデータで起動（開発モード）
 scripts/run.ps1 -Root "<データフォルダ>"       # 別のデータフォルダで起動
+scripts/run.ps1 -NoDev                       # 開発モード（開発者ツール等）なしで起動
 ```
 
 `dist/干渉ビューア.exe` を直接ダブルクリックすると、インストール版と同じ `%LocalAppData%\ClashViewer\data` を使う。

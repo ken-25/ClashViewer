@@ -1,6 +1,7 @@
 import * as FRAGS from "@thatopen/fragments";
 import * as THREE from "three";
 import type { Viewer3D } from "../scene/viewer3d";
+import { buildStoreyTree, idsOfKeys, STOREY, type StoreyInfo, type StoreyNode } from "./layerTree";
 
 /**
  * Fragments（That Open）のモデル表示。
@@ -17,12 +18,18 @@ export interface LoadedModel {
   holder: THREE.Group; // matrix = シーン座標への変換
   fragToIfc: THREE.Matrix4; // F → W（IFC 本来の座標）
   categories: string[];
+  /** 階（IfcBuildingStorey）・クラスの 2 段ツリー。空間構造が無ければ「全体」1 つ */
+  storeys: StoreyNode[];
   visible: boolean;
   opacity: number;
-  hiddenCategories: Set<string>;
-  ghostCategories: Set<string>;
+  /** 非表示・半透明にする階・クラス（キーの形式は layerTree.ts） */
+  hiddenKeys: Set<string>;
+  ghostKeys: Set<string>;
   role: "current" | "previous";
 }
+
+/** 半透明にした階・クラスの不透明度 */
+const GHOST_OPACITY = 0.2;
 
 const Y_UP_TO_Z_UP = new THREE.Matrix4().makeRotationX(Math.PI / 2);
 
@@ -103,6 +110,7 @@ export class ModelManager {
     const coord = await model.getCoordinationMatrix();
     const fragToIfc = Y_UP_TO_Z_UP.clone().multiply(coord.clone().invert());
     const categories = (await model.getCategories()).sort();
+    const storeys = await this.storeyTree(model, categories);
     const lm: LoadedModel = {
       key,
       datasetFolder,
@@ -110,10 +118,11 @@ export class ModelManager {
       holder,
       fragToIfc,
       categories,
+      storeys,
       visible: true,
       opacity: 1,
-      hiddenCategories: new Set(),
-      ghostCategories: new Set(),
+      hiddenKeys: new Set(),
+      ghostKeys: new Set(),
       role,
     };
     this.models.set(modelId, lm);
@@ -179,29 +188,58 @@ export class ModelManager {
 
   async setModelOpacity(lm: LoadedModel, opacity: number) {
     lm.opacity = opacity;
-    if (opacity >= 0.999) await lm.model.resetOpacity(undefined);
-    else await lm.model.setOpacity(undefined, opacity);
     await this.applyCategoryStates(lm);
   }
 
-  /** IFC クラス単位の表示・半透明を反映する */
-  async applyCategoryStates(lm: LoadedModel) {
-    await lm.model.setVisible(undefined, true);
-    if (lm.hiddenCategories.size) {
-      const ids = await this.idsOfCategories(lm, [...lm.hiddenCategories]);
-      if (ids.length) await lm.model.setVisible(ids, false);
-    }
-    if (lm.ghostCategories.size) {
-      const ids = await this.idsOfCategories(lm, [...lm.ghostCategories]);
-      if (ids.length) await lm.model.setOpacity(ids, 0.2);
-    }
-    await this.update(true);
+  /** 前の反映が終わってから次を始める（続けて押したときに、途中の状態が後から上書きしないように） */
+  private applyChain: Promise<void> = Promise.resolve();
+
+  /** モデル全体の不透明度と、階・クラス単位の表示・半透明を反映する */
+  applyCategoryStates(lm: LoadedModel): Promise<void> {
+    const run = async () => {
+      if (!this.models.has(`${lm.datasetFolder}/${lm.key}`)) return;
+      await lm.model.setVisible(undefined, true);
+      // 半透明を外した階・クラスも戻るように、毎回モデル全体の不透明度から置き直す
+      if (lm.opacity >= 0.999) await lm.model.resetOpacity(undefined);
+      else await lm.model.setOpacity(undefined, lm.opacity);
+      const hidden = idsOfKeys(lm.hiddenKeys, lm.storeys);
+      if (hidden.length) await lm.model.setVisible(hidden, false);
+      const ghost = idsOfKeys(lm.ghostKeys, lm.storeys);
+      if (ghost.length) await lm.model.setOpacity(ghost, Math.min(GHOST_OPACITY, lm.opacity));
+      await this.update(true);
+    };
+    this.applyChain = this.applyChain.then(run, run);
+    return this.applyChain;
   }
 
-  async idsOfCategories(lm: LoadedModel, categories: string[]): Promise<number[]> {
-    if (categories.length === 0) return [];
-    const res = await lm.model.getItemsOfCategories(categories.map((c) => new RegExp(`^${c}$`)));
-    return Object.values(res).flat();
+  /** 階・クラスの要素全体が見える範囲（シーン座標）。要素が無ければ空 */
+  async boxOfIds(lm: LoadedModel, ids: number[]): Promise<THREE.Box3> {
+    if (ids.length === 0) return new THREE.Box3();
+    lm.holder.updateMatrixWorld(true);
+    return lm.model.getMergedBox(ids);
+  }
+
+  /**
+   * 階・クラスのツリーを作る。空間構造が読めない IFC でも、クラスだけの 1 段（「全体」）にはする。
+   */
+  private async storeyTree(model: FRAGS.FragmentsModel, categories: string[]): Promise<StoreyNode[]> {
+    const byCategory = categories.length ? await model.getItemsOfCategories(categories.map((c) => new RegExp(`^${c}$`))) : {};
+    const root = await model.getSpatialStructure().catch((e) => {
+      console.warn("空間構造を読めません", e);
+      return null;
+    });
+    const storeyIds = byCategory[STOREY] ?? [];
+    const info = new Map<number, StoreyInfo>();
+    if (storeyIds.length) {
+      const v = (x: any) => (x && typeof x === "object" && "value" in x ? x.value : x);
+      const data = await model.getItemsData(storeyIds, { attributesDefault: true }).catch(() => []);
+      storeyIds.forEach((id, i) => {
+        const d: any = data[i] ?? {};
+        const el = Number(v(d.Elevation));
+        info.set(id, { guid: v(d._guid) ? String(v(d._guid)) : null, name: v(d.Name) ? String(v(d.Name)) : null, elevation: Number.isFinite(el) ? el : null });
+      });
+    }
+    return buildStoreyTree(root, byCategory, info);
   }
 
   /** 画面上の位置にあるモデル要素（表示中のものだけ） */

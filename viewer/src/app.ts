@@ -213,7 +213,7 @@ export class App {
         const lm = await this.models.load(entry.key, m.folder, buf);
         this.models.setPlacement(lm, placement);
         if (lm.categories.includes("IFCSPACE")) {
-          lm.hiddenCategories.add("IFCSPACE");
+          lm.hiddenKeys.add("IFCSPACE");
           await this.models.applyCategoryStates(lm);
         }
       }
@@ -702,7 +702,7 @@ export class App {
     const visibility: any = { pointcloud: this.pc ? { visible: this.pc.group.visible, colorMode: this.pc.material.uniforms.uColorMode.value } : null, models: {} };
     for (const lm of this.models.models.values()) {
       if (lm.role !== "current") continue;
-      visibility.models[lm.key] = { visible: lm.visible, opacity: lm.opacity, hidden: [...lm.hiddenCategories], ghost: [...lm.ghostCategories] };
+      visibility.models[lm.key] = { visible: lm.visible, opacity: lm.opacity, hidden: [...lm.hiddenKeys], ghost: [...lm.ghostKeys] };
     }
     return {
       camera: {
@@ -734,8 +734,9 @@ export class App {
     for (const lm of this.models.models.values()) {
       const s = v.visibility?.models?.[lm.key];
       if (!s || lm.role !== "current") continue;
-      lm.hiddenCategories = new Set(s.hidden);
-      lm.ghostCategories = new Set(s.ghost);
+      // 以前の指摘はクラス名だけ（全階）で保存している。そのまま全階のクラス指定として効く
+      lm.hiddenKeys = new Set(s.hidden);
+      lm.ghostKeys = new Set(s.ghost);
       await this.models.setModelVisible(lm, s.visible);
       await this.models.setModelOpacity(lm, s.opacity);
     }
