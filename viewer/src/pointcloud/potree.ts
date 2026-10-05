@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { dataUrl, fetchRange } from "../host";
 import type { DecodeRequest, DecodeResponse } from "./decoder.worker";
 import DecoderWorker from "./decoder.worker?worker";
+import { MaxHeap } from "./heap";
 import { ColorMode, PointCloudMaterial, SizeMode, VN_TEX_WIDTH } from "./material";
 import type { CloudSample } from "../scene/snap";
 
@@ -110,6 +111,10 @@ export class PotreePointCloud {
   private readonly lastCam = new THREE.Matrix4();
   private readonly tmpFrustum = new THREE.Frustum();
   private readonly tmpMat = new THREE.Matrix4();
+  // pick / collect の作業用（ホバーのたびに作り直さない）
+  private readonly scratchRay = new THREE.Raycaster();
+  private readonly scratchViewProj = new THREE.Matrix4();
+  private readonly scratchV = new THREE.Vector3();
   clipBox: THREE.Box3 | null = null; // 表示座標。外側のノードは読まない
   onChange: (() => void) | null = null;
 
@@ -494,16 +499,16 @@ export class PotreePointCloud {
     clipPlanes: THREE.Plane[] = [],
   ): PointPick | null {
     camera.updateMatrixWorld();
-    const ray = new THREE.Raycaster();
+    const ray = this.scratchRay;
     ray.setFromCamera(ndc, camera);
-    const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const viewProj = this.scratchViewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const mx = ((ndc.x + 1) / 2) * viewport.width;
     const my = ((1 - ndc.y) / 2) * viewport.height;
     const tol2 = tolerancePx * tolerancePx;
     let best: PointPick | null = null;
     let bestDepth = Infinity;
     const e = viewProj.elements;
-    const v = new THREE.Vector3();
+    const v = this.scratchV;
     for (const node of this.visibleNodes) {
       const pts = node.points;
       if (!pts) continue;
@@ -528,7 +533,7 @@ export class PotreePointCloud {
         const depth = (e[2] * x + e[6] * y + e[10] * z + e[14]) / w;
         if (depth >= bestDepth || depth < -1 || depth > 1) continue;
         v.set(x, y, z);
-        if (clipPlanes.some((p) => p.distanceToPoint(v) < 0)) continue;
+        if (isClipped(clipPlanes, v)) continue;
         bestDepth = depth;
         best = { point: v.clone(), distance: ray.ray.origin.distanceTo(v), node: node.name };
       }
@@ -549,9 +554,9 @@ export class PotreePointCloud {
     maxPoints = 40000,
   ): CloudSample {
     camera.updateMatrixWorld();
-    const ray = new THREE.Raycaster();
+    const ray = this.scratchRay;
     ray.setFromCamera(ndc, camera);
-    const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const viewProj = this.scratchViewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const mx = ((ndc.x + 1) / 2) * viewport.width;
     const my = ((1 - ndc.y) / 2) * viewport.height;
     const r2 = radiusPx * radiusPx;
@@ -562,7 +567,7 @@ export class PotreePointCloud {
     const sx: number[] = [];
     const sy: number[] = [];
     const dist: number[] = [];
-    const v = new THREE.Vector3();
+    const v = this.scratchV;
     const tanPx = (camera as THREE.PerspectiveCamera).isPerspectiveCamera
       ? (2 * Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov / 2))) / viewport.height
       : 0;
@@ -593,7 +598,7 @@ export class PotreePointCloud {
         const depth = (e[2] * x + e[6] * y + e[10] * z + e[14]) / w;
         if (depth < -1 || depth > 1) continue;
         v.set(x, y, z);
-        if (clipPlanes.some((p) => p.distanceToPoint(v) < 0)) continue;
+        if (isClipped(clipPlanes, v)) continue;
         pos.push(x, y, z);
         sx.push(dx);
         sy.push(dy);
@@ -612,41 +617,8 @@ export class PotreePointCloud {
   }
 }
 
-class MaxHeap<T> {
-  private items: { item: T; weight: number }[] = [];
-  get size() {
-    return this.items.length;
-  }
-  push(item: T, weight: number) {
-    const a = this.items;
-    a.push({ item, weight });
-    let i = a.length - 1;
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (a[p].weight >= a[i].weight) break;
-      [a[p], a[i]] = [a[i], a[p]];
-      i = p;
-    }
-  }
-  pop(): { item: T; weight: number } | undefined {
-    const a = this.items;
-    if (a.length === 0) return undefined;
-    const top = a[0];
-    const last = a.pop()!;
-    if (a.length > 0) {
-      a[0] = last;
-      let i = 0;
-      for (;;) {
-        const l = i * 2 + 1;
-        const r = l + 1;
-        let m = i;
-        if (l < a.length && a[l].weight > a[m].weight) m = l;
-        if (r < a.length && a[r].weight > a[m].weight) m = r;
-        if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
-        i = m;
-      }
-    }
-    return top;
-  }
+/** 切断面の外側（どれかの面の裏側）にある点か */
+function isClipped(planes: THREE.Plane[], v: THREE.Vector3): boolean {
+  for (let i = 0; i < planes.length; i++) if (planes[i].distanceToPoint(v) < 0) return true;
+  return false;
 }

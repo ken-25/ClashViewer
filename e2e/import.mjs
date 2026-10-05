@@ -1,5 +1,5 @@
 // 取込の E2E: ファイルを登録 → 取込画面で「取り込む」→ 完了まで待ち、表示と計測値を記録する
-//   node import.mjs <名称> <ファイル...> [--version]（--version なら表示中の現場の新しい版として取り込む）
+//   node import.mjs <名称> <ファイル...> [--version]（--version なら表示中のプロジェクトの新しい版として取り込む）
 import { join, resolve } from "node:path";
 import { launch, assert, share, shots } from "./lib.mjs";
 
@@ -21,7 +21,7 @@ try {
   const radios = await page.$$('#dlg-import input[name="imp-mode"]');
   if (asVersion) {
     await radios[1].click();
-    // 現場 ID（CV_SITE）が指定されていればそれを、無ければ同じ名称の現場のうち版の多いものを選ぶ
+    // プロジェクト ID（CV_SITE）が指定されていればそれを、無ければ同じ名称のプロジェクトのうち版の多いものを選ぶ
     const value = await page.evaluate(
       ([n, site]) => {
         if (site) return site;
@@ -30,7 +30,7 @@ try {
       },
       [name, process.env.CV_SITE ?? ""],
     );
-    if (!value) throw new Error(`現場 ${name} がありません`);
+    if (!value) throw new Error(`プロジェクト ${name} がありません`);
     await page.selectOption("#dlg-import select", value);
     // 前の版を明示する（CV_BASE=フォルダ名）。PoC の検証用で、画面からは常に最新版が前の版になる
     if (process.env.CV_BASE) {

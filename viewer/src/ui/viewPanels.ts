@@ -159,7 +159,7 @@ export function renderLayers(app: App) {
   const pc = app.pc;
   const models = [...app.models.models.values()].filter((m) => m.role === "current");
   if (!app.current) {
-    mount(el, h("p", { class: "muted" }, "現場を開くと、点群とモデルがここに並びます。"));
+    mount(el, h("p", { class: "muted" }, "プロジェクトを開くと、点群とモデルがここに並びます。"));
     return;
   }
   // 作り直してもキーボードのフォーカスを同じボタンに戻す
@@ -241,7 +241,7 @@ export function renderProps(app: App) {
   const el = $("#props");
   const sel = app.selection;
   if (!sel) {
-    mount(el, h("h2", null, "属性"), h("p", { class: "small muted" }, app.current ? "モデル要素をクリックすると属性を表示します。" : app.isLoadingView ? "" : "現場を開いてください。"));
+    mount(el, h("h2", null, "属性"), h("p", { class: "small muted" }, app.current ? "モデル要素をクリックすると属性を表示します。" : app.isLoadingView ? "" : "プロジェクトを開いてください。"));
     return;
   }
   const d = sel.data ?? {};
@@ -363,7 +363,7 @@ export function renderToolOptions(app: App) {
       h("ol", { class: "small steps" },
         h("li", null, "UCS の原点にする点をクリック"),
         h("li", null, "X 軸の向きにする点をクリック（Esc で向きは変えずに終了）")),
-      h("p", { class: "small muted" }, "Z 軸は常に鉛直上です。点群・モデルのどちらの点でも決められます。UCS は現場ごとにこの PC に保存します。"),
+      h("p", { class: "small muted" }, "Z 軸は常に鉛直上です。点群・モデルのどちらの点でも決められます。UCS はプロジェクトごとにこの PC に保存します。"),
       ucsStatus(app),
     );
     return;

@@ -88,9 +88,9 @@ export class IssuePanel {
       h("div", { class: "row small" }, h("label", null, "担当"), h("select", { class: "grow", onchange: (e: Event) => { filter.assignee = (e.target as HTMLSelectElement).value; this.render(); } },
         h("option", { value: "" }, "すべて"), app.ctx.members.map((m) => h("option", { value: m.id, selected: filter.assignee === m.id }, m.name)))),
       h("div", { class: "row small" }, h("label", null, "範囲"), h("select", { class: "grow", onchange: (e: Event) => { filter.scope = (e.target as HTMLSelectElement).value as any; this.render(); } },
-        h("option", { value: "site", selected: filter.scope === "site" }, "この現場の全版"),
+        h("option", { value: "site", selected: filter.scope === "site" }, "このプロジェクトの全版"),
         h("option", { value: "version", selected: filter.scope === "version" }, "表示中の版だけ"),
-        h("option", { value: "all", selected: filter.scope === "all" }, "すべての現場"))),
+        h("option", { value: "all", selected: filter.scope === "all" }, "すべてのプロジェクト"))),
       h("div", { class: "small muted" }, `${list.length} 件`),
       list.map((i) =>
         h(

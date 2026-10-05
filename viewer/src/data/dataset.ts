@@ -81,7 +81,7 @@ export interface Manifest {
   id: string;
   folder: string;
   name: string;
-  site: string; // 系列（同じ現場の版）の ID。最初の版の id
+  site: string; // 系列（同じプロジェクトの版）の ID。最初の版の id
   version: number;
   previous: string | null; // 前の版のフォルダ
   state: "importing" | "ready";
@@ -137,7 +137,7 @@ export function mapConversionMatrix(mc: MapConversion, unitScale: number): { mat
   return { matrix: m, note };
 }
 
-/** 系列（同じ現場の版の並び）ごとにまとめる。新しい版が先頭 */
+/** 系列（同じプロジェクトの版の並び）ごとにまとめる。新しい版が先頭 */
 export function groupBySite(list: Manifest[]): Map<string, Manifest[]> {
   const map = new Map<string, Manifest[]>();
   for (const m of list) {

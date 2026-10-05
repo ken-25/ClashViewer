@@ -384,7 +384,7 @@ h3 {
   margin: 4px;
 }
 
-/* ツールバーの現場名から開く「現場・版」 */
+/* ツールバーのプロジェクト名から開く「プロジェクト・版」 */
 .popover {
   position: fixed;
   left: 120px;
@@ -415,7 +415,7 @@ h3 {
   font-weight: 600;
 }
 
-/* 現場を開いていないときの 3D 画面中央 */
+/* プロジェクトを開いていないときの 3D 画面中央 */
 .empty-view {
   position: absolute;
   inset: 0;
@@ -528,7 +528,7 @@ h3 {
   color: var(--muted);
 }
 
-/* 現場・版 */
+/* プロジェクト・版 */
 .dropzone {
   border: 1px dashed #59616d;
   border-radius: 6px;

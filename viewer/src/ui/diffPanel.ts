@@ -10,7 +10,7 @@ export function renderDiff(app: App) {
   const m = app.current;
   const d = app.diff;
   if (!m) {
-    mount(el, h("p", { class: "muted" }, app.isLoadingView ? "" : "現場を開いてください。"));
+    mount(el, h("p", { class: "muted" }, app.isLoadingView ? "" : "プロジェクトを開いてください。"));
     return;
   }
   if (!d) {

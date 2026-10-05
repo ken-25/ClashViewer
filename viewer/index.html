@@ -9,11 +9,11 @@
   </head>
   <body>
     <div id="app">
-      <!-- ツールバー: 開いている現場と、作業のモード（ツール）だけを置く。見え方の切替は 3D 画面の左上 -->
+      <!-- ツールバー: 開いているプロジェクトと、作業のモード（ツール）だけを置く。見え方の切替は 3D 画面の左上 -->
       <header id="toolbar" role="toolbar" aria-label="操作">
         <span class="brand">干渉ビューア</span>
-        <button id="current-title" class="current-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="site-panel" title="現場・版を開く・取り込む">
-          <span id="current-name">現場を選んでください</span> ▾
+        <button id="current-title" class="current-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="site-panel" title="プロジェクト・版を開く・取り込む">
+          <span id="current-name">プロジェクトを選んでください</span> ▾
         </button>
         <div class="group" role="group" aria-label="ツール">
           <button data-tool="select" class="active" title="要素を選んで属性を見る（Esc）">選択</button>
@@ -27,8 +27,8 @@
           <button id="btn-settings" title="表示名・保存先（プロジェクトフォルダ・設定データフォルダ）">設定</button>
         </div>
       </header>
-      <!-- 現場・版の一覧と取込（ツールバーの現場名から開く） -->
-      <div id="site-panel" class="popover hidden" role="dialog" aria-label="現場・版"></div>
+      <!-- プロジェクト・版の一覧と取込（ツールバーのプロジェクト名から開く） -->
+      <div id="site-panel" class="popover hidden" role="dialog" aria-label="プロジェクト・版"></div>
 
       <!-- 左: 何を見ているか（レイヤー）と、作業で残ったもの（計測・指摘・差分） -->
       <aside id="left">

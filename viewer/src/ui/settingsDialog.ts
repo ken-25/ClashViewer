@@ -163,7 +163,7 @@ export class SettingsDialog {
     }
     const r = await showMessage(
       "保存しました",
-      `新しい保存先は再起動すると使われます。${copied}\n\n今すぐ再起動しますか？（開いている現場は閉じます）`,
+      `新しい保存先は再起動すると使われます。${copied}\n\n今すぐ再起動しますか？（開いているプロジェクトは閉じます）`,
       [
         { label: "後で再起動", value: "later" },
         { label: "今すぐ再起動", value: "restart", primary: true },

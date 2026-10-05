@@ -6,8 +6,8 @@ import { $, confirmDialog, fmtDate, fmtDuration, h, mount, showMessage } from ".
 import { openSettings } from "./settingsDialog";
 
 /**
- * 現場・版のパネル（ツールバーの現場名から開くポップオーバー）: 取込と、現場（系列）・版の一覧、
- * 表示中の版の情報。現場を開いていないときは 3D 画面の中央に入口を出す。
+ * プロジェクト・版のパネル（ツールバーのプロジェクト名から開くポップオーバー）: 取込と、プロジェクト（系列）・版の一覧、
+ * 表示中の版の情報。プロジェクトを開いていないときは 3D 画面の中央に入口を出す。
  * 取込の進み具合は、パネルを閉じていても状態バーに出す。
  */
 export class DataPanel {
@@ -183,7 +183,7 @@ export class DataPanel {
     const sites = [...app.sites.entries()].sort((a, b) => b[1][0].createdAt.localeCompare(a[1][0].createdAt));
     mount(
       el,
-      h("div", { class: "row panel-head" }, h("h2", { class: "grow" }, "現場・版"), h("button", { class: "small", title: "閉じる（Esc）", onclick: () => this.close() }, "閉じる")),
+      h("div", { class: "row panel-head" }, h("h2", { class: "grow" }, "プロジェクト・版"), h("button", { class: "small", title: "閉じる（Esc）", onclick: () => this.close() }, "閉じる")),
       h(
         "div",
         { class: "dropzone" },
@@ -192,7 +192,7 @@ export class DataPanel {
         h("div", { class: "small muted" }, "変換は自動で行い、終わると一覧に出ます。"),
       ),
       this.job ? h("div", { class: "import-box", id: "import-progress" }) : null,
-      h("h2", null, `現場 ${sites.length} 件`),
+      h("h2", null, `プロジェクト ${sites.length} 件`),
       sites.length === 0
         ? h(
             "div",
@@ -209,7 +209,7 @@ export class DataPanel {
     this.renderJob();
   }
 
-  /** 現場を開いていないときの 3D 画面中央の入口 */
+  /** プロジェクトを開いていないときの 3D 画面中央の入口 */
   private renderEmpty() {
     const el = $("#empty-view");
     const app = this.app;
@@ -221,10 +221,10 @@ export class DataPanel {
       h(
         "div",
         { class: "empty-card" },
-        h("h2", null, hasSites ? "現場を開いてください" : "まだデータがありません"),
+        h("h2", null, hasSites ? "プロジェクトを開いてください" : "まだデータがありません"),
         h("p", { class: "muted" }, "E57（点群）・IFC（モデル）を画面にドロップすると取り込めます。"),
         h("div", { class: "row", style: "justify-content:center" },
-          hasSites ? h("button", { onclick: () => this.open() }, "現場・版の一覧を開く") : null,
+          hasSites ? h("button", { onclick: () => this.open() }, "プロジェクト・版の一覧を開く") : null,
           h("button", { class: "primary", onclick: () => this.pick() }, "ファイルを選んで取り込む")),
         hasSites
           ? null
@@ -369,7 +369,7 @@ function carriedLabel(owner: string, carriedFrom: string | undefined, folder: st
   return null;
 }
 
-/** 取込の確認画面。新しい現場か、既存の現場の新しい版かを選ぶ */
+/** 取込の確認画面。新しいプロジェクトか、既存のプロジェクトの新しい版かを選ぶ */
 function importDialog(app: App, files: LocalFile[], ignored: LocalFile[]): Promise<ImportPlan | null> {
   const dlg = $("#dlg-import") as HTMLDialogElement;
   const sites = [...app.sites.entries()];
@@ -421,14 +421,14 @@ function importDialog(app: App, files: LocalFile[], ignored: LocalFile[]): Promi
         h(
           "div",
           { class: "row" },
-          h("label", null, h("input", { type: "radio", name: "imp-mode", checked: mode === "new", onchange: () => { mode = "new"; name = firstName; draw(); } }), " 新しい現場"),
-          h("label", null, h("input", { type: "radio", name: "imp-mode", checked: mode === "version", disabled: sites.length === 0, onchange: () => { mode = "version"; resetKeep(); draw(); } }), " 既存の現場の新しい版"),
+          h("label", null, h("input", { type: "radio", name: "imp-mode", checked: mode === "new", onchange: () => { mode = "new"; name = firstName; draw(); } }), " 新しいプロジェクト"),
+          h("label", null, h("input", { type: "radio", name: "imp-mode", checked: mode === "version", disabled: sites.length === 0, onchange: () => { mode = "version"; resetKeep(); draw(); } }), " 既存のプロジェクトの新しい版"),
         ),
         mode === "version"
           ? h(
               "div",
               { class: "row" },
-              h("label", null, "現場"),
+              h("label", null, "プロジェクト"),
               h("select", { class: "grow", onchange: (e: Event) => { site = (e.target as HTMLSelectElement).value; resetKeep(); draw(); } },
                 sites.map(([s, v]) => h("option", { value: s, selected: s === site }, `${v[0].name}（第${v[0].version}版まで）`))),
             )

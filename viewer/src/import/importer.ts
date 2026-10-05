@@ -26,7 +26,7 @@ import IfcWorker from "./ifc.worker?worker";
 
 export interface ImportPlan {
   name: string;
-  base: Manifest | null; // 前の版（新しい現場なら null）
+  base: Manifest | null; // 前の版（新しいプロジェクトなら null）
   files: LocalFile[];
   keys: Record<string, string>; // token → モデル名
   keepPointcloud: boolean;
@@ -146,7 +146,7 @@ export class ImportJob {
       t.status = "running";
       t.message = "原点と座標合わせを決めています";
       this.emit();
-      // 取込の間に他の人（や自分）が同じ現場の版を足したり、座標合わせを保存したりしていることがある。
+      // 取込の間に他の人（や自分）が同じプロジェクトの版を足したり、座標合わせを保存したりしていることがある。
       // 確認画面を出した時点の情報ではなく、公開直前の一覧から版番号と座標合わせを決める（同じ版番号が 2 つできないように）
       const fresh = plan.base ? ((await host.listDatasets()) as Manifest[]).filter((d) => d.site === plan.base!.site) : [];
       const freshBase = fresh.find((d) => d.folder === plan.base?.folder) ?? plan.base;

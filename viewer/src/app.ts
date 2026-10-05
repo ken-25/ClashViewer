@@ -152,7 +152,7 @@ export class App {
     $("#hint").textContent = msg;
   }
 
-  /** 読み込み中の表示があるか（中央の「現場を開いてください」と重ねないために使う） */
+  /** 読み込み中の表示があるか（中央の「プロジェクトを開いてください」と重ねないために使う） */
   isLoadingView = false;
 
   setLoading(msg: string | null) {
@@ -160,7 +160,7 @@ export class App {
     el.textContent = msg ?? "";
     el.classList.toggle("hidden", !msg);
     this.isLoadingView = !!msg;
-    // 読み込み中は入口カードを隠す。終わったら現場の有無に合わせて戻す
+    // 読み込み中は入口カードを隠す。終わったらプロジェクトの有無に合わせて戻す
     if (msg) $("#empty-view").classList.add("hidden");
     else $("#empty-view").classList.toggle("hidden", !!this.current);
   }
@@ -200,6 +200,10 @@ export class App {
       this.current = m;
       const origin = m.origin;
       $("#current-name").textContent = `${m.name} 第${m.version}版`;
+      // モデルのファイルは点群の階層を読む間に先に取り始める（読込は従来どおり 1 つずつ）
+      const buffers = m.models.map((entry) => fetchBytes(fileRel(entry.owner, entry.file)));
+      // 点群の読込が失敗して使われなかった分の未処理の失敗通知を出さない
+      for (const b of buffers) b.catch(() => undefined);
       if (m.pointcloud) {
         const pc = await PotreePointCloud.load(fileRel(m.pointcloud.owner, m.pointcloud.dir), origin, {
           pointBudget: this.pointBudget,
@@ -214,9 +218,9 @@ export class App {
         this.viewer.content.add(pc.group);
       }
       const placement = ifcToScene(m);
-      for (const entry of m.models) {
+      for (const [i, entry] of m.models.entries()) {
         this.setLoading(`モデル ${entry.key} を読込中…`);
-        const buf = await fetchBytes(fileRel(entry.owner, entry.file));
+        const buf = await buffers[i];
         const lm = await this.models.load(entry.key, m.folder, buf);
         this.models.setPlacement(lm, placement);
         if (lm.categories.includes("IFCSPACE")) {
@@ -244,7 +248,7 @@ export class App {
       this.emit("dataset");
     } finally {
       this.setLoading(null);
-      // 開けなかったとき、隠していた「現場を開いてください」を戻す
+      // 開けなかったとき、隠していた「プロジェクトを開いてください」を戻す
       if (!this.current) this.emit("dataset");
     }
   }
@@ -262,7 +266,7 @@ export class App {
     await this.models.unloadAll();
     this.clipping.setMode("none");
     this.current = null;
-    $("#current-name").textContent = "現場を選んでください";
+    $("#current-name").textContent = "プロジェクトを選んでください";
     this.alignPreview = null;
     this.align = { model: [], cloud: [], modelScene: [], cloudScene: [] };
     this.viewer.requestRender();
@@ -753,7 +757,7 @@ export class App {
     this.emit("display");
   }
 
-  /** 同じ現場（全ての版）の指摘を位置に重ねて表示する */
+  /** 同じプロジェクト（全ての版）の指摘を位置に重ねて表示する */
   renderIssuePins() {
     for (const c of [...this.issuePins.children]) {
       this.issuePins.remove(c);
@@ -818,7 +822,7 @@ export class App {
           if (!entry) continue;
           const buf = await fetchBytes(fileRel(entry.owner, entry.file));
           const lm = await this.models.load(key, prev.folder, buf, "previous");
-          // 同じ現場の IFC は同じ座標系なので、表示中の版の座標合わせで置く
+          // 同じプロジェクトの IFC は同じ座標系なので、表示中の版の座標合わせで置く
           this.models.setPlacement(lm, ifcToScene(m));
           const ids = (await lm.model.getLocalIdsByGuids(guids)).filter((x): x is number => x !== null);
           await lm.model.setVisible(undefined, false);

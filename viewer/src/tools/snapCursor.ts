@@ -113,6 +113,11 @@ export class SnapCursor {
 
   /** カーソルが 3D 画面から出た・ドラッグを始めた */
   leave() {
+    // すでに空なら何も変わらない（回転中の pointermove ごとに描き直させない）
+    if (!this.inside && !this.queued && this.list.length === 0 && !this.sticky) {
+      this.fresh = false;
+      return;
+    }
     this.inside = false;
     this.queued = null;
     this.list = [];

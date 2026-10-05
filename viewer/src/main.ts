@@ -40,13 +40,13 @@ async function main() {
   setupMenus();
   $("#btn-help").addEventListener("click", () => openHelp());
 
-  /** 現場を開いていないと使えないボタン（ツール・見え方）を、見た目も無効にする */
+  /** プロジェクトを開いていないと使えないボタン（ツール・見え方）を、見た目も無効にする */
   const syncEnabled = () => {
     const off = !app.current;
     document.querySelectorAll<HTMLButtonElement>("[data-tool]:not([data-tool=select]), .needs-data").forEach((b) => {
       b.dataset.title ??= b.title;
       b.disabled = off;
-      b.title = off ? `現場を開くと使えます。${b.dataset.title}` : b.dataset.title;
+      b.title = off ? `プロジェクトを開くと使えます。${b.dataset.title}` : b.dataset.title;
     });
   };
   app.on("dataset", () => {
@@ -69,7 +69,7 @@ async function main() {
     renderMeasureList(app);
     renderToolOptions(app);
   });
-  // 切断の状態はメニュー以外（指摘の視点再現・現場を開き直す）でも変わるので、表示を毎回合わせる
+  // 切断の状態はメニュー以外（指摘の視点再現・プロジェクトを開き直す）でも変わるので、表示を毎回合わせる
   const syncClipButtons = () => {
     document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => {
       const on = x.dataset.clip === app.clipping.mode;
@@ -273,12 +273,12 @@ async function main() {
     void app.refreshDatasets().catch(() => undefined);
   });
 
-  await app.refreshDatasets();
-  // 前回の現場を自動で開くときは、最初の描画の前に読み込み中にする（「現場を開いてください」を出さない）
+  // プロジェクト一覧と保存先の変化は互いに依存しないので同時に取る（起動時の RPC 待ちを 1 往復分減らす）
+  await Promise.all([app.refreshDatasets(), poll()]);
+  // 前回のプロジェクトを自動で開くときは、最初の描画の前に読み込み中にする（「プロジェクトを開いてください」を出さない）
   const last = localStorage.getItem("lastDataset");
   const start = app.datasets.find((d) => d.folder === last);
   if (start) app.setLoading(`${start.name}（第${start.version}版）を開いています…`);
-  await poll();
   data.render();
   issues.render();
   syncEnabled();
