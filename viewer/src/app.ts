@@ -152,10 +152,17 @@ export class App {
     $("#hint").textContent = msg;
   }
 
+  /** 読み込み中の表示があるか（中央の「現場を開いてください」と重ねないために使う） */
+  isLoadingView = false;
+
   setLoading(msg: string | null) {
     const el = $("#loading");
     el.textContent = msg ?? "";
     el.classList.toggle("hidden", !msg);
+    this.isLoadingView = !!msg;
+    // 読み込み中は入口カードを隠す。終わったら現場の有無に合わせて戻す
+    if (msg) $("#empty-view").classList.add("hidden");
+    else $("#empty-view").classList.toggle("hidden", !!this.current);
   }
 
   // ---- データセット ----
@@ -237,6 +244,8 @@ export class App {
       this.emit("dataset");
     } finally {
       this.setLoading(null);
+      // 開けなかったとき、隠していた「現場を開いてください」を戻す
+      if (!this.current) this.emit("dataset");
     }
   }
 

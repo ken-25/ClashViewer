@@ -213,7 +213,7 @@ export class DataPanel {
   private renderEmpty() {
     const el = $("#empty-view");
     const app = this.app;
-    el.classList.toggle("hidden", !!app.current);
+    el.classList.toggle("hidden", !!app.current || app.isLoadingView);
     if (app.current) return;
     const hasSites = app.sites.size > 0;
     mount(

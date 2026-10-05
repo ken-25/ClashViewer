@@ -241,7 +241,7 @@ export function renderProps(app: App) {
   const el = $("#props");
   const sel = app.selection;
   if (!sel) {
-    mount(el, h("h2", null, "属性"), h("p", { class: "small muted" }, app.current ? "モデル要素をクリックすると属性を表示します。" : "現場を開いてください。"));
+    mount(el, h("h2", null, "属性"), h("p", { class: "small muted" }, app.current ? "モデル要素をクリックすると属性を表示します。" : app.isLoadingView ? "" : "現場を開いてください。"));
     return;
   }
   const d = sel.data ?? {};

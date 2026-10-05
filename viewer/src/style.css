@@ -320,6 +320,7 @@ h3 {
   justify-content: center;
   background: rgba(20, 22, 26, 0.6);
   font-size: 15px;
+  /* 背後に入口カードが透けて重ならないよう、最前面に置く */
   z-index: 2;
 }
 /* 3D 画面左上: 見え方（視点・投影・切断・目印） */

@@ -274,6 +274,10 @@ async function main() {
   });
 
   await app.refreshDatasets();
+  // 前回の現場を自動で開くときは、最初の描画の前に読み込み中にする（「現場を開いてください」を出さない）
+  const last = localStorage.getItem("lastDataset");
+  const start = app.datasets.find((d) => d.folder === last);
+  if (start) app.setLoading(`${start.name}（第${start.version}版）を開いています…`);
   await poll();
   data.render();
   issues.render();
@@ -285,8 +289,6 @@ async function main() {
   renderNavMenu(app);
   syncClipButtons();
 
-  const last = localStorage.getItem("lastDataset");
-  const start = app.datasets.find((d) => d.folder === last);
   if (start) await app.openDataset(start).catch((e) => showMessage("開けません", String(e)));
 
   // E2E テスト・計測用（開発モードのみ）
