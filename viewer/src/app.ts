@@ -13,14 +13,21 @@ import { SNAP_LABEL, type SnapCandidate } from "./scene/snap";
 import { Viewer3D } from "./scene/viewer3d";
 import { ClipBoxEditor } from "./tools/clipBoxEdit";
 import { Clipping } from "./tools/clipping";
+import { fitCloudPlane, PickMarks, planeFrom3 } from "./tools/planePick";
 import { LocalFrame, MeasureTool, type Axis, type MeasureKind } from "./tools/measure";
 import { SnapCursor } from "./tools/snapCursor";
 import { $ } from "./ui/dom";
 
-export type Tool = "select" | "measure" | "origin" | "issue" | "align";
+/** plane: 面に合わせた断面を足す（ツールバーには出さず、切断メニュー・切断パネルから始める） */
+export type Tool = "select" | "measure" | "origin" | "issue" | "align" | "plane";
+
+export type PlaneMethod = "face" | "points";
 
 /** カーソルが軸の線からこの距離（px）以内なら、その軸に吸着する */
 const AXIS_TRACK_PX = 10;
+/** 断面の向きを WCS の軸へ丸める角度。モデルの法線は圧縮のぶれ程度、点群・3点指定はクリックのぶれを見込む */
+const MODEL_NORMAL_TOL_DEG = 0.11;
+const PICKED_NORMAL_TOL_DEG = 0.5;
 
 export interface AlignPick {
   model: THREE.Vector3[]; // IFC 座標
@@ -98,6 +105,13 @@ export class App {
   nav: NavSettings = loadNavSettings();
   private listeners = new Map<string, Set<() => void>>();
   private originStep = 0;
+  /** 断面の決め方。face: 面（モデルの面・点群の平らな所）を 1 クリック / points: 3点指定 */
+  planeMethod: PlaneMethod = "face";
+  /** パネルで選んだ決め方（自動で 3点指定に切り替わっても、次はこちらから始める） */
+  private planeMethodPref: PlaneMethod = "face";
+  /** 3点指定で選んだ点（シーン座標） */
+  planePts: THREE.Vector3[] = [];
+  private readonly planeMarks = new PickMarks();
 
   constructor() {
     this.viewer = new Viewer3D($("#view"));
@@ -122,12 +136,13 @@ export class App {
     this.viewer.controls.addEventListener("change", () => this.snap.cameraMoved());
     this.viewer.controls.addEventListener("end", () => this.snap.refresh());
     this.clipping.onChange = () => {
-      if (this.pc) this.pc.clipBox = this.clipping.mode === "box" ? this.clipping.box : null;
+      if (this.pc) this.pc.clipBox = this.clipping.boxOn ? this.clipping.box : null;
       this.pc?.invalidate();
       void this.models.update(true);
       this.clipEditor.refresh();
       this.emit("clip");
     };
+    this.viewer.overlay.add(this.planeMarks.object);
     this.issuePins.name = "issues";
     this.viewer.overlay.add(this.issuePins);
     this.viewer.onBeforeRender(() => {
@@ -264,7 +279,7 @@ export class App {
       this.picker.cloud = null;
     }
     await this.models.unloadAll();
-    this.clipping.setMode("none");
+    this.clipping.reset();
     this.current = null;
     $("#current-name").textContent = "プロジェクトを選んでください";
     this.alignPreview = null;
@@ -389,6 +404,9 @@ export class App {
     this.tool = t;
     this.measure.cancel();
     this.originStep = 0;
+    this.planeMethod = this.planeMethodPref;
+    this.planePts = [];
+    this.planeMarks.set([]);
     document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
     // 計測・合わせ中は指摘のピンをクリックで反応させない（ピンの下の点を拾えるように）
     document.body.classList.toggle("tool-active", t !== "select");
@@ -406,7 +424,7 @@ export class App {
       const lock = this.axisLock ? `（${this.axisLock.toUpperCase()} 方向に固定）` : "";
       if (m.kind === "distance") {
         const step = m.hasPending ? `2点目をクリック${lock}` : "1点目をクリック";
-        this.setHint(`距離: ${step}　${keys}・X/Y/Z 軸固定・Esc ${m.hasPending ? "取消" : "終了"}`);
+        this.setHint(`距離: ${step}　${keys}・X/Y/Z 軸固定・Esc ${m.hasPending ? "キャンセル" : "終了"}`);
       } else {
         const step = !m.hasPending ? "1点目をクリック" : m.pointCount === 1 ? `2点目をクリック${lock}` : `次の点をクリック${lock}・Enter/ダブルクリックで確定`;
         this.setHint(`折れ線: ${step}　${keys}・Backspace 1点戻す・Esc ${m.hasPending ? "確定" : "終了"}`);
@@ -418,7 +436,8 @@ export class App {
       measure: "",
       origin: this.originStep === 0 ? `UCS: 原点にする点をクリック　${keys}・Esc 終了` : `UCS: X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${keys}`,
       issue: "指摘する位置をクリック　Esc 終了",
-      align: `3点合わせ: 右のパネルの手順に従ってください　${keys}・Esc 終了`,
+      align: `3点合わせ: 右のパネルの手順に従ってください　${keys}・Esc キャンセル`,
+      plane: `${this.planeMethod === "face" ? "断面（面に合わせる）" : "断面（3点）"}: ${this.planeStepHint()}`,
     };
     this.setHint(hints[t]);
   }
@@ -485,6 +504,8 @@ export class App {
       return { models: needModel, cloud: !needModel };
     }
     if (t === "measure" || t === "origin") return { models: true, cloud: true };
+    // 断面の 3点指定は角・端に吸着させる（面からのときは面の法線が要るのでスナップしない）
+    if (t === "plane" && this.planeMethod === "points") return { models: true, cloud: true };
     return null;
   }
 
@@ -558,6 +579,7 @@ export class App {
     this.showCoord(p);
     if (!p) {
       if (t === "select") await this.select(null);
+      if (t === "plane") this.setHint(`断面: 何も無い所です。${this.planeStepHint()}`);
       return;
     }
     switch (t) {
@@ -590,7 +612,137 @@ export class App {
       case "align":
         this.addAlignPick(p);
         break;
+      case "plane":
+        this.planeClick(p, e);
+        break;
     }
+  }
+
+  /** 切断ボックスのオン・オフ（3D 画面左上の「切断」メニュー） */
+  setClipBox(on: boolean) {
+    if (on && !this.clipping.active) this.prepareClipExtent();
+    this.clipping.setBoxOn(on);
+  }
+
+  /**
+   * 水平・垂直の断面を足す（3D 画面左上の「切断」メニュー）。今見ている所（注視点）を通す。
+   * 垂直は UCS を設定していれば UCS の X・Y 軸に直交、なければ WCS。
+   */
+  addAxisSection(axis: Axis) {
+    const m = this.current;
+    if (!m) return;
+    if (!this.clipping.active) this.prepareClipExtent();
+    const ext = this.clipping.extent;
+    const t = this.viewer.controls.target;
+    const point = ext.containsPoint(t) ? t.clone() : ext.getCenter(new THREE.Vector3());
+    const ucs = axis !== "z" && this.frame.isSet;
+    const dir = ucs ? this.frame.axisVector(axis) : new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+    const base = ucs ? this.frame.toLocal(point)[axis] : point[axis] + m.origin[{ x: 0, y: 1, z: 2 }[axis]];
+    const label = axis === "z" ? "水平" : `垂直（${ucs ? "UCS " : ""}${axis.toUpperCase()}）`;
+    this.clipping.addAxisSection(point, dir, label, { space: ucs ? "UCS" : "WCS", axis, base });
+  }
+
+  /** 面に合わせた断面ツールを始める（切断の範囲を今見ている側に合わせてから） */
+  startPlaneTool() {
+    if (!this.current) return;
+    if (!this.clipping.active) this.prepareClipExtent();
+    this.setTool("plane");
+  }
+
+  /** 断面の決め方を変える（右のパネル）。次に断面ツールを始めたときもこの決め方 */
+  setPlaneMethod(m: PlaneMethod) {
+    this.planeMethodPref = m;
+    this.planeMethod = m;
+    this.planePts = [];
+    this.planeMarks.set([]);
+    this.updateToolHint();
+    this.snap.refresh();
+    this.emit("tool");
+  }
+
+  /** 3点指定の 1 点を戻す（Backspace） */
+  undoPlanePoint() {
+    if (!this.planePts.length) return;
+    this.planePts.pop();
+    this.planeMarks.set(this.planePts);
+    this.updateToolHint();
+    this.snap.refresh();
+    this.emit("tool");
+  }
+
+  /** 今の手順の案内（断面ツール） */
+  planeStepHint(): string {
+    if (this.planeMethod === "face") return "モデルの面か、点群の平らな所をクリック　Esc キャンセル";
+    return `${this.planePts.length + 1}点目をクリック　Tab 候補切替・Alt フリー${this.planePts.length ? "・Backspace 1点戻す" : ""}・Esc キャンセル`;
+  }
+
+  /**
+   * 断面ツールのクリック。
+   * - 面から: モデルは面の法線、点群は周りの点に平面を当てはめる。平らでなければ 3点指定に切り替え、
+   *   クリックした点を 1 点目にする。
+   * - 3点指定: 3 点目で面を決める。
+   * 足せたら選択ツールに戻る。
+   */
+  private planeClick(p: Pick, e: MouseEvent) {
+    if (this.planeMethod === "points") {
+      this.addPlanePoint(p.point);
+      return;
+    }
+    if (p.source === "model" && p.normal && p.normal.lengthSq() > 1e-12) {
+      this.finishPlane(p.point, p.normal, MODEL_NORMAL_TOL_DEG);
+      return;
+    }
+    if (p.source === "cloud" && this.pc) {
+      // 周りの点を集めて当てはめる。範囲は画面で約 16px（近くで細かく、遠くで広く）
+      const d = this.viewer.camera.position.distanceTo(p.point);
+      const radius = THREE.MathUtils.clamp(16 * this.picker.pxSize(d), 0.05, 0.5);
+      const sample = this.pc.collect(this.viewer.camera, this.viewer.toNdc(e.clientX, e.clientY), this.viewer.size, 32, this.viewer.renderer.clippingPlanes);
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i < sample.n; i++) pts.push(new THREE.Vector3(sample.pos[i * 3], sample.pos[i * 3 + 1], sample.pos[i * 3 + 2]));
+      const fit = fitCloudPlane(p.point, pts, radius);
+      if (fit) {
+        // クリックした点を面へ落とした所を通す
+        const on = p.point.clone().addScaledVector(fit.normal, -fit.normal.dot(p.point.clone().sub(fit.centroid)));
+        this.finishPlane(on, fit.normal, PICKED_NORMAL_TOL_DEG);
+        return;
+      }
+    }
+    // 面の向きが決まらない（点群の角・縁・まばらな所など）: 3点指定に切り替えて続ける
+    this.planeMethod = "points";
+    this.planePts = [p.point.clone()];
+    this.planeMarks.set(this.planePts);
+    this.snap.refresh();
+    this.emit("tool");
+    this.setHint(`断面: ここは平らな面が見つかりません。3点で決めます: ${this.planeStepHint()}`);
+  }
+
+  private addPlanePoint(pt: THREE.Vector3) {
+    this.planePts.push(pt.clone());
+    if (this.planePts.length < 3) {
+      this.planeMarks.set(this.planePts);
+      this.updateToolHint();
+      this.snap.refresh();
+      this.emit("tool");
+      return;
+    }
+    const [a, b, c] = this.planePts;
+    const n = planeFrom3(a, b, c);
+    if (!n) {
+      this.planePts.pop();
+      this.planeMarks.set(this.planePts);
+      this.setHint(`断面: 3点がほぼ一直線です。3点目を離れた所でクリック　${this.planeStepHint()}`);
+      return;
+    }
+    // 目印は 3 点の真ん中に置く
+    this.finishPlane(a.clone().add(b).add(c).divideScalar(3), n, PICKED_NORMAL_TOL_DEG);
+  }
+
+  private finishPlane(point: THREE.Vector3, normal: THREE.Vector3, tolDeg: number) {
+    const toCamera = this.viewer.camera.position.clone().sub(point);
+    // 平行投影では、カメラの位置より視線の向きの方が確か
+    if (this.viewer.camera instanceof THREE.OrthographicCamera) this.viewer.camera.getWorldDirection(toCamera).negate();
+    this.clipping.addFaceSection(point, normal, toCamera, tolDeg);
+    this.setTool("select");
   }
 
   private saveFrame() {

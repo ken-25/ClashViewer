@@ -112,12 +112,12 @@ export class IssuePanel {
       { class: "issue-detail" },
       h("h2", null, "指摘の詳細"),
       h("div", null, h("b", null, i.title || "（件名なし）")),
-      h("div", { class: "small muted" }, `${app.memberName(i.createdBy)} ${fmtDate(i.createdAt)} 登録・第${i.datasetVersion}版（${i.dataset}）`),
+      h("div", { class: "small muted" }, `${app.memberName(i.createdBy)} ${fmtDate(i.createdAt)} 登録・第${i.datasetVersion}版`),
       otherVersion ? h("div", { class: "small", style: "color:var(--warn)" }, "表示中とは別の版で登録された指摘です（位置で重ねて表示しています）。") : null,
       i.comment ? h("p", { style: "white-space:pre-wrap" }, i.comment) : null,
       i.screenshots.map((s) => h("img", { src: dataUrl(s), alt: `${i.title} のスクリーンショット`, loading: "lazy" })),
       h("div", { class: "row" },
-        h("button", { onclick: () => app.restoreView(i.view) }, "登録時の視点を再現"),
+        h("button", { title: "登録したときの視点・切断・表示の状態に戻す", onclick: () => app.restoreView(i.view) }, "登録時の視点へ移動"),
         otherVersion ? h("button", { onclick: async () => {
           const ds = app.datasets.find((d) => d.folder === i.dataset);
           if (ds) { await app.openDataset(ds); await app.restoreView(i.view); }

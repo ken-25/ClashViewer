@@ -12,6 +12,8 @@ export interface Pick {
   distance: number;
   model?: { lm: LoadedModel; localId: number };
   snap?: SnapKind | "point" | "line" | "face";
+  /** モデルの面の法線（シーン座標・カメラ側向き）。点群・スナップでは無い */
+  normal?: THREE.Vector3;
 }
 
 export interface PickOptions {
@@ -63,6 +65,7 @@ export class Picker {
           source: "model",
           distance: this.viewer.camera.position.distanceTo(h.point),
           model: { lm: h.lm, localId: h.localId },
+          normal: h.normal?.clone(),
         };
         // ほぼ同じ奥行きならモデルを優先
         if (!best || cand.distance < best.distance * 1.01 + 0.01) best = cand;

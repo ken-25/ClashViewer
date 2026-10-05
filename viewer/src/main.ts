@@ -5,7 +5,6 @@ import { formatCount } from "./data/dataset";
 import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
 import { host, isHosted } from "./host";
-import type { ClipMode } from "./tools/clipping";
 import type { Projection, ViewKind } from "./scene/viewer3d";
 import { DataPanel } from "./ui/dataPanel";
 import { renderDiff } from "./ui/diffPanel";
@@ -16,7 +15,6 @@ import { Navigator } from "./ui/navigator";
 import { SettingsDialog } from "./ui/settingsDialog";
 import { renderLayers, renderMeasureList, renderNavMenu, renderRight, renderToolOptions, syncClipPanel, updatePcStats } from "./ui/viewPanels";
 
-const CLIP_LABEL: Record<ClipMode, string> = { none: "なし", box: "ボックス", section: "断面" };
 
 async function main() {
   if (!isHosted) {
@@ -68,17 +66,33 @@ async function main() {
   app.on("measures", () => {
     renderMeasureList(app);
     renderToolOptions(app);
+    // UCS が変わると、垂直断面の追加の軸（UCS / WCS）が変わる
+    syncClipButtons();
   });
   // 切断の状態はメニュー以外（指摘の視点再現・プロジェクトを開き直す）でも変わるので、表示を毎回合わせる
   const syncClipButtons = () => {
-    document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((x) => {
-      const on = x.dataset.clip === app.clipping.mode;
-      x.classList.toggle("active", on);
-      x.setAttribute("aria-checked", String(on));
-    });
+    const clip = app.clipping;
+    const n = clip.enabledSections;
+    const parts = [clip.boxOn ? "ボックス" : "", n ? `断面 ${n}` : ""].filter(Boolean);
     const btn = $("#btn-clip");
-    btn.textContent = `切断: ${CLIP_LABEL[app.clipping.mode]} ▾`;
-    btn.classList.toggle("on", app.clipping.mode !== "none");
+    btn.textContent = `切断: ${parts.length ? parts.join("＋") : "なし"}${clip.active && !clip.showGuides ? "（枠なし）" : ""} ▾`;
+    btn.classList.toggle("on", clip.active);
+    const check = (id: string, on: boolean) => {
+      const c = $(id) as HTMLInputElement;
+      c.checked = on;
+      c.closest("[role=menuitemcheckbox]")?.setAttribute("aria-checked", String(on));
+    };
+    check("#chk-clip-box", clip.boxOn);
+    check("#chk-clip-guides", clip.showGuides);
+    ($("#btn-clip-off") as HTMLButtonElement).disabled = !clip.active;
+    // 垂直断面は UCS を設定していれば UCS の軸に直交
+    const ucs = app.frame.isSet;
+    for (const a of ["x", "y"] as const) {
+      const b = document.querySelector<HTMLButtonElement>(`[data-add-section=${a}]`)!;
+      const name = `${ucs ? "UCS " : ""}${a.toUpperCase()}`;
+      b.textContent = `垂直断面を追加（${name}）`;
+      b.title = `今見ている所を通り、${name} 軸に直交する面で切る`;
+    }
   };
   app.on("clip", () => {
     // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
@@ -97,17 +111,15 @@ async function main() {
       app.setTool(b.dataset.tool as Tool);
     }),
   );
-  document.querySelectorAll<HTMLButtonElement>("[data-clip]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const mode = b.dataset.clip as ClipMode;
-      if (mode !== "none" && app.clipping.mode === "none") app.prepareClipExtent();
-      if (mode === "section" && app.clipping.mode !== "section") {
-        const c = app.clipping.extent.getCenter(new THREE.Vector3());
-        app.clipping.section.position = app.clipping.section.axis === "z" ? c.z : c[app.clipping.section.axis];
-      }
-      app.clipping.setMode(mode);
-    }),
+  // 切断メニュー: 足す・オフ・枠の表示はここだけ（右のパネルは今ある切断の調整）
+  $("#chk-clip-box").addEventListener("change", (e) => app.setClipBox((e.target as HTMLInputElement).checked));
+  document.querySelectorAll<HTMLButtonElement>("[data-add-section]").forEach((b) =>
+    b.addEventListener("click", () => app.addAxisSection(b.dataset.addSection as "x" | "y" | "z")),
   );
+  $("#btn-add-face-section").addEventListener("click", () => app.startPlaneTool());
+  $("#btn-clip-off").addEventListener("click", () => app.clipping.disableAll());
+  // 枠の表示（切断は効いたまま）。メニューを閉じずに切り替えられる
+  $("#chk-clip-guides").addEventListener("change", (e) => app.clipping.setShowGuides((e.target as HTMLInputElement).checked));
   document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) =>
     b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.viewBox())),
   );
@@ -225,6 +237,9 @@ async function main() {
       app.measure.undo();
       app.updateToolHint();
       app.snap.refresh();
+    } else if (e.key === "Backspace" && app.tool === "plane" && app.planePts.length) {
+      e.preventDefault();
+      app.undoPlanePoint();
     } else if (e.key === "Shift" && app.tool === "measure") {
       app.setShiftHeld(true);
     } else if (e.key === "Tab" && app.snap.active && !e.ctrlKey && !e.altKey) {
@@ -242,6 +257,8 @@ async function main() {
       app.toggleAxisLock(key as "x" | "y" | "z");
     } else if (key === "p" && plain && app.current) {
       toggleProjection();
+    } else if (key === "b" && plain && !e.shiftKey && app.current) {
+      app.clipping.setShowGuides(!app.clipping.showGuides);
     } else if (e.key === "F1" || (e.key === "?" && !e.ctrlKey && !e.altKey)) {
       e.preventDefault();
       openHelp();

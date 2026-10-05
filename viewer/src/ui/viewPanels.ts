@@ -7,6 +7,7 @@ import type { LoadedModel } from "../model/models";
 import { ColorMode, SizeMode } from "../pointcloud/material";
 import { solveRigid } from "../tools/align";
 import { MIN_BOX_SIZE } from "../tools/clipBoxEdit";
+import type { Section } from "../tools/clipping";
 import { fmtM, MEASURE_KIND_LABEL, type Axis, type Measurement } from "../tools/measure";
 import { $, h, mount, showMessage } from "./dom";
 import { rangeSlider } from "./rangeSlider";
@@ -201,14 +202,8 @@ export function renderLayers(app: App) {
         }),
       ),
     ),
-    app.diff
-      ? [
-          h("h2", null, "差分"),
-          h("label", { class: "row small" }, h("input", { type: "checkbox", checked: app.diffShown, onchange: (e: Event) => app.showDiff((e.target as HTMLInputElement).checked) }),
-            "前の版との差分を色分け（追加=緑・変更=黄・削除=赤）"),
-          h("div", { class: "small muted" }, "一覧は「差分」タブにあります。"),
-        ]
-      : null,
+    // 差分の色分けは「差分」タブ（成果）にまとめる。色分け中だけ、ここにも状態を出す
+    app.diffShown ? h("p", { class: "small muted" }, "前の版との差分を色分けしています（切替は「差分」タブ）。") : null,
   );
   if (focused) el.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focused)}"]`)?.focus();
   updatePcStats(app);
@@ -305,7 +300,7 @@ export function renderMeasureList(app: App) {
   );
 }
 
-const TOOL_TITLE: Record<Exclude<Tool, "select">, string> = { measure: "計測", origin: "UCS（ユーザー座標系）", issue: "指摘を登録", align: "3点合わせ" };
+const TOOL_TITLE: Record<Exclude<Tool, "select">, string> = { measure: "計測", origin: "UCS（ユーザー座標系）", issue: "指摘を登録", align: "3点合わせ", plane: "面に合わせて断面を追加" };
 
 /**
  * 右側: いま何をしているか。選択ツールなら属性、ほかのツールならそのツールの設定と手順。
@@ -329,7 +324,7 @@ function updateRightStrip(app: App) {
   const el = document.getElementById("right-strip-label");
   if (!el) return;
   const parts = [app.tool === "select" ? "属性" : TOOL_TITLE[app.tool]];
-  if (app.current && app.clipping.mode !== "none") parts.push(app.clipping.mode === "box" ? "切断ボックス" : "断面");
+  if (app.current && (app.clipping.boxOn || app.clipping.sections.length > 0)) parts.push("切断");
   el.textContent = parts.join("・");
 }
 
@@ -340,7 +335,34 @@ export function renderToolOptions(app: App) {
   const el = $("#tool-opts");
   const head = h("div", { class: "row panel-head" },
     h("h2", { class: "grow" }, TOOL_TITLE[t]),
-    h("button", { class: "small", title: "選択ツールに戻る（Esc）", onclick: () => { if (t === "align") app.resetAlign(); app.setTool("select"); } }, "終了"));
+    // 途中の作業を捨てるツール（3点合わせ・断面の追加）は「キャンセル」、結果が残るツールは「終了」
+    h("button", { class: "small", title: "選択ツールに戻る（Esc）", onclick: () => { if (t === "align") app.resetAlign(); app.setTool("select"); } }, t === "plane" || t === "align" ? "キャンセル" : "終了"));
+  if (t === "plane") {
+    const method = app.planeMethod;
+    mount(
+      el,
+      head,
+      h("div", { class: "row small", role: "group", "aria-label": "断面の決め方" }, h("span", { class: "lbl" }, "決め方"),
+        ...(["face", "points"] as const).map((m) =>
+          h("button", {
+            class: method === m ? "active" : "",
+            "aria-pressed": String(method === m),
+            title: m === "face" ? "モデルの面、または点群の平らな所を 1 回クリック" : "面の上の 3 点をクリック（点群・モデルの角や端に吸着）",
+            onclick: () => app.setPlaneMethod(m),
+          }, m === "face" ? "面から" : "3点"))),
+      method === "face"
+        ? h("ol", { class: "small steps" },
+            h("li", null, "切断面にしたい面（斜めの壁・屋根・配管の側面など）をクリック。モデルの面でも、点群の平らな所でも使えます"),
+            h("li", null, "その面に平行な切断面ができます"))
+        : h("ol", { class: "small steps" },
+            [0, 1, 2].map((i) => h("li", { class: app.planePts.length === i ? "" : "muted" }, `${i + 1}点目${app.planePts[i] ? " ✓" : ""}`))),
+      h("p", { class: "small muted" }, method === "face"
+        ? "点群の角・縁など平らでない所をクリックすると、3点指定に切り替わり、その点を 1点目にします。"
+        : "3 点を通る面で切ります。Backspace で 1 点戻せます。"),
+      h("p", { class: "small muted" }, "クリックした側（カメラ側）を消します。位置・残す側は、できた断面を下の「切断」で調整します。"),
+    );
+    return;
+  }
   if (t === "align") {
     renderAlignPanel(app, el, head);
     return;
@@ -438,7 +460,10 @@ function measureOptions(app: App) {
 let panelSync: { key: string; sync: () => void } | null = null;
 
 function panelKey(app: App): string {
-  return `${app.clipping.mode}|${app.clipping.section.axis}|${app.clipping.extent.min.toArray()}|${app.clipping.extent.max.toArray()}`;
+  const c = app.clipping;
+  // 断面は位置（offset）以外が変わったら作り直す（offset はスライダー・3D のドラッグで動くので値だけ合わせる）
+  const secs = c.sections.map((p) => `${p.id}:${p.enabled}:${p.flip}:${p.thickness}`).join(",");
+  return `${c.boxOn}|${c.extent.min.toArray()}|${c.extent.max.toArray()}|${c.showGuides}|${app.tool === "select"}|${secs}`;
 }
 
 /**
@@ -450,106 +475,134 @@ export function syncClipPanel(app: App) {
   else renderClipPanel(app);
 }
 
-/** 右側の下段: 切断ボックス・断面の設定（切断を使っている間だけ。ツールとは別に効き続ける） */
+/**
+ * 右側の下段: 今ある切断（切断ボックス・断面）の調整だけ。切断を使っている間だけ出す。
+ * 足す・すべてオフ・枠の表示は 3D 画面左上の「切断」メニューにまとめ、ここには置かない。
+ */
 export function renderClipPanel(app: App) {
   const el = $("#clip-panel");
   const clip = app.clipping;
   panelSync = null;
   updateRightStrip(app);
-  if (clip.mode === "none" || !app.current) {
+  if ((!clip.boxOn && clip.sections.length === 0) || !app.current) {
     el.classList.add("hidden");
     el.replaceChildren();
     return;
   }
-  const head = (title: string) =>
-    h("div", { class: "row panel-head" }, h("h2", { class: "grow" }, title),
-      h("button", { class: "small", title: "切断をやめて全体を表示する", onclick: () => clip.setMode("none") }, "切断なし"));
   el.classList.remove("hidden");
-  const ext = clip.extent;
-  const { lo, hi } = clip.limits();
-  const step = 0.01;
-  const slider = (label: string, value: number, min: number, max: number, set: (v: number) => void) =>
-    h("div", { class: "row small" }, h("label", null, label), h("input", { type: "range", class: "grow", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": label,
-      oninput: (e: Event) => set(Number((e.target as HTMLInputElement).value)) }));
-  if (clip.mode === "box") {
-    const b = clip.box;
-    const axes = ["x", "y", "z"] as const;
-    const sliders = axes.map((a) =>
-      rangeSlider({
-        label: a.toUpperCase(),
-        lo: lo[a],
-        hi: hi[a],
-        minGap: MIN_BOX_SIZE,
-        get: () => ({ min: b.min[a], max: b.max[a] }),
-        set: (min, max) => {
-          b.min[a] = min;
-          b.max[a] = max;
-          clip.apply();
-        },
-        format: (min, max) => `幅 ${fmtM(max - min)}`,
-      }),
-    );
-    panelSync = { key: panelKey(app), sync: () => sliders.forEach((s) => s.sync()) };
-    mount(
-      el,
-      head("切断ボックス"),
-      sliders.map((s) => s.el),
-      h("label", { class: "row small" },
-        h("input", { type: "checkbox", checked: app.clipEditor.enabled, onchange: (e: Event) => { app.clipEditor.enabled = (e.target as HTMLInputElement).checked; app.clipEditor.refresh(); } }),
-        "3D で面をドラッグして動かす"),
-      h("div", { class: "small muted" }, "手前の面はそのままドラッグ、奥の面（箱の内側）は Shift を押しながらドラッグ。箱の外をドラッグすると回転します。"),
-      h("div", { class: "row" },
-        h("button", { disabled: !app.lastPick, title: "最後にクリックした位置の周り 4m の箱にする", onclick: () => { if (app.lastPick) { clip.boxAround(app.lastPick.point, 2); renderClipPanel(app); } } }, "クリック位置の周り"),
-        h("button", { title: "箱を全体の大きさに戻す", onclick: () => { clip.setBox(ext); renderClipPanel(app); } }, "範囲をリセット"),
-        h("button", { title: "箱の全体が見える所へ移動", onclick: () => app.viewer.fit(clip.box.clone()) }, "箱へ移動"),
-      ),
-    );
-  } else {
-    const s = clip.section;
-    const pos = slider("位置", s.position, lo[s.axis], hi[s.axis], (v) => clip.setSection({ position: v }));
-    const posInput = pos.querySelector("input")!;
-    const thickness = h("select", { onchange: (e: Event) => clip.setSection({ thickness: Number((e.target as HTMLSelectElement).value) }) },
-      [[0, "片側を残す"], [0.05, "5 cm"], [0.1, "10 cm"], [0.3, "30 cm"], [1, "1 m"]].map(([v, l]) => h("option", { value: String(v), selected: s.thickness === v }, l as string)));
-    const flip = h("input", { type: "checkbox", checked: s.flip, onchange: (e: Event) => clip.setSection({ flip: (e.target as HTMLInputElement).checked }) });
-    panelSync = {
-      key: panelKey(app),
-      sync: () => {
-        const cur = clip.section;
-        if (Number(posInput.value) !== cur.position) posInput.value = String(cur.position);
-        thickness.value = String(cur.thickness);
-        flip.checked = cur.flip;
-        updateSectionLabel(app);
-      },
-    };
-    mount(
-      el,
-      head("断面"),
-      h("div", { class: "row small" }, "向き",
-        ...(["z", "x", "y"] as const).map((a) => h("button", { class: s.axis === a ? "active" : "", onclick: () => {
-          const c = ext.getCenter(new THREE.Vector3());
-          clip.setSection({ axis: a, position: c[a] });
-          renderClipPanel(app);
-        } }, a === "z" ? "水平" : `垂直（${a.toUpperCase()}）`))),
-      pos,
-      h("div", { class: "row small" }, h("label", null, "厚み"), thickness),
-      h("label", { class: "row small" }, flip, "残す側を反対にする"),
-      h("div", { class: "small muted", id: "section-label" }),
-      h("div", { class: "row" },
-        h("button", { disabled: !app.lastPick, title: "最後にクリックした位置を断面の位置にする", onclick: () => { if (app.lastPick) { clip.setSection({ position: app.lastPick.point[s.axis] }); renderClipPanel(app); } } }, "クリック位置に合わせる"),
-        h("button", { title: "断面に向き合う視点に切り替える", onclick: () => app.viewer.setView(s.axis === "z" ? "top" : s.axis === "x" ? "right" : "front", app.viewBox()) }, "断面を正面から見る"),
-      ),
-    );
-    updateSectionLabel(app);
+  const syncs: (() => void)[] = [];
+  const blocks: HTMLElement[] = [];
+  if (clip.boxOn) {
+    const box = renderBoxBlock(app);
+    syncs.push(box.sync);
+    blocks.push(box.el);
   }
+  for (const s of clip.sections) {
+    const b = renderSectionBlock(app, s);
+    syncs.push(b.sync);
+    blocks.push(b.el);
+  }
+  panelSync = { key: panelKey(app), sync: () => syncs.forEach((f) => f()) };
+  mount(
+    el,
+    h("h2", null, "切断"),
+    blocks,
+    clip.showGuides
+      ? h("p", { class: "small muted" }, "3D 画面でも動かせます: 箱の面をドラッグ（奥の面は Shift+ドラッグ）、断面の四角をドラッグするとレールに沿って動きます。")
+      : h("p", { class: "small muted" }, "枠を隠しています。切断は効いたままです（B か「切断」メニューで表示）。"),
+  );
 }
 
-function updateSectionLabel(app: App) {
-  const el = document.getElementById("section-label");
-  const m = app.current;
-  if (!el || !m) return;
-  const s = app.clipping.section;
-  const i = { x: 0, y: 1, z: 2 }[s.axis];
-  el.textContent = `位置（WCS）${(s.position + m.origin[i]).toFixed(3)} m`;
+function renderBoxBlock(app: App): { el: HTMLElement; sync: () => void } {
+  const clip = app.clipping;
+  const { lo, hi } = clip.limits();
+  const b = clip.box;
+  const sliders = (["x", "y", "z"] as const).map((a) =>
+    rangeSlider({
+      label: a.toUpperCase(),
+      lo: lo[a],
+      hi: hi[a],
+      minGap: MIN_BOX_SIZE,
+      get: () => ({ min: b.min[a], max: b.max[a] }),
+      set: (min, max) => {
+        b.min[a] = min;
+        b.max[a] = max;
+        clip.apply();
+      },
+      format: (min, max) => `幅 ${fmtM(max - min)}`,
+    }),
+  );
+  const el = h("div", { class: "clip-block" },
+    h("div", { class: "row panel-head" }, h("h3", { class: "grow" }, "切断ボックス"),
+      h("button", { "aria-label": "切断ボックスをオフにする", title: "切断ボックスをオフにする（範囲は覚えておきます。「切断」メニューで戻せます）", onclick: () => clip.setBoxOn(false) }, "×")),
+    sliders.map((s) => s.el),
+    h("div", { class: "row" },
+      h("button", { disabled: !app.lastPick, title: "最後にクリックした位置の周り 4m の箱にする", onclick: () => { if (app.lastPick) clip.boxAround(app.lastPick.point, 2); } }, "クリック位置の周り"),
+      h("button", { title: "箱を全体の大きさに戻す", onclick: () => clip.setBox(clip.extent) }, "範囲をリセット"),
+      h("button", { title: "箱の全体が見える所へ移動", onclick: () => app.viewer.fit(clip.box.clone()) }, "箱へ移動"),
+    ),
+  );
+  return { el, sync: () => sliders.forEach((s) => s.sync()) };
+}
+
+const THICKNESS: [number, string][] = [[0, "片側を残す"], [0.05, "5 cm"], [0.1, "10 cm"], [0.3, "30 cm"], [1, "1 m"]];
+
+/** 断面 1 つ: オン・オフ、向き、位置、厚み、残す側、削除 */
+function renderSectionBlock(app: App, s: Section): { el: HTMLElement; sync: () => void } {
+  const clip = app.clipping;
+  const off = !s.enabled;
+  const { lo, hi } = clip.sectionRange(s);
+  const pos = h("input", { type: "range", class: "grow", min: String(lo), max: String(hi), step: "0.01", value: String(s.offset), disabled: off, "aria-label": `${s.name} の位置`,
+    oninput: (e: Event) => clip.updateSection(s.id, { offset: Number((e.target as HTMLInputElement).value) }) });
+  const posLabel = h("span", { class: "small muted num" });
+  const sync = () => {
+    if (Number(pos.value) !== s.offset) pos.value = String(s.offset);
+    // 水平・垂直は座標（WCS / UCS）、面に合わせた断面は作ったときの面からのずれ
+    posLabel.textContent = s.coord
+      ? `${s.coord.space} ${s.coord.axis.toUpperCase()} ${(s.coord.base + s.offset).toFixed(3)} m`
+      : `${s.offset >= 0 ? "+" : ""}${s.offset.toFixed(3)} m`;
+  };
+  sync();
+  // 断面に向き合う: 消している側（法線側。flip なら逆側）から見る
+  const moveFront = () => {
+    const dir = s.normal.clone().multiplyScalar(s.flip ? -1 : 1);
+    // 真上・真下から見るときは、カメラの上向きが決まるように少しだけ傾ける（視点の「平面」と同じ）
+    if (Math.abs(dir.z) > 0.9999) dir.y -= 0.0001;
+    const o = clip.sectionOrigin(s);
+    const box = app.viewBox();
+    app.viewer.fit(box.isEmpty() ? new THREE.Box3(o, o.clone()).expandByScalar(5) : box, dir);
+  };
+  const toPick = () => {
+    if (app.lastPick) clip.updateSection(s.id, { offset: app.lastPick.point.clone().sub(s.point).dot(s.normal) });
+  };
+  const el = h("div", { class: `clip-block${off ? " muted" : ""}` },
+    h("div", { class: "row panel-head" },
+      h("label", { class: "row grow", title: "この断面を効かせる" },
+        h("input", { type: "checkbox", checked: s.enabled, onchange: (e: Event) => clip.updateSection(s.id, { enabled: (e.target as HTMLInputElement).checked }) }),
+        h("h3", null, s.name)),
+      h("span", { class: "small muted", title: "断面の向き" }, s.label ?? normalLabel(s.normal)),
+      h("button", { "aria-label": `${s.name} を消す`, title: "この断面を消す", onclick: () => clip.removeSection(s.id) }, "×")),
+    h("div", { class: "row small" }, h("label", null, "位置"), pos, posLabel),
+    h("div", { class: "row small" }, h("label", null, "厚み"),
+      h("select", { disabled: off, "aria-label": `${s.name} の厚み`, onchange: (e: Event) => clip.updateSection(s.id, { thickness: Number((e.target as HTMLSelectElement).value) }) },
+        THICKNESS.map(([v, l]) => h("option", { value: String(v), selected: s.thickness === v }, l))),
+      h("label", { class: "row" },
+        h("input", { type: "checkbox", checked: s.flip, disabled: off, onchange: (e: Event) => clip.updateSection(s.id, { flip: (e.target as HTMLInputElement).checked }) }),
+        "残す側を反対に")),
+    h("div", { class: "row small" },
+      h("button", { class: "small", disabled: off || !app.lastPick, title: "最後にクリックした位置を通るように動かす", onclick: toPick }, "クリック位置に合わせる"),
+      h("button", { class: "small", disabled: off, title: "断面に向き合う視点へ移動", onclick: moveFront }, "正面へ移動")),
+  );
+  return { el, sync };
+}
+
+/** 面に合わせた断面の向きを短く（水平・鉛直は分かりやすく、それ以外は傾きと方位） */
+function normalLabel(n: THREE.Vector3): string {
+  const tilt = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(n.z))));
+  if (tilt < 0.05) return "水平";
+  const az = (THREE.MathUtils.radToDeg(Math.atan2(n.y, n.x)) + 360) % 360;
+  if (Math.abs(tilt - 90) < 0.05) return `鉛直・方位 ${az.toFixed(1)}°`;
+  return `傾き ${tilt.toFixed(1)}°・方位 ${az.toFixed(1)}°`;
 }
 
 /** 3点合わせの「水平を保つ」（パネルを作り直しても保つ） */
@@ -572,7 +625,7 @@ function renderAlignPanel(app: App, el: HTMLElement, head: HTMLElement) {
       console.warn(e);
     }
   }
-  app.setHint(next ? `3点合わせ: ${next} をクリック` : "3点合わせ: 結果を確認して保存してください");
+  app.setHint(next ? `3点合わせ: ${next} をクリック　Esc キャンセル` : "3点合わせ: 結果を確認して保存してください　Esc キャンセル");
   mount(
     el,
     head,

@@ -65,11 +65,18 @@
           </div>
           <button id="btn-projection" class="needs-data" aria-pressed="false" title="平行投影（遠近なし）と透視を切り替える（P）">平行投影</button>
           <div class="menu-wrap">
-            <button id="btn-clip" class="needs-data" aria-haspopup="menu" aria-expanded="false" title="切断ボックス・断面（設定は右のパネル）">切断: なし ▾</button>
-            <div class="menu hidden" role="menu" aria-label="切断">
-              <button role="menuitemradio" data-clip="none" class="active">切断なし</button>
-              <button role="menuitemradio" data-clip="box">切断ボックス</button>
-              <button role="menuitemradio" data-clip="section">断面</button>
+            <button id="btn-clip" class="needs-data" aria-haspopup="menu" aria-expanded="false" title="切断ボックス・断面（足す・オフはここ、調整は右のパネル）">切断: なし ▾</button>
+            <!-- 切断を足す・全部オフ・枠の表示はここだけ。右のパネルは今ある切断の調整だけ -->
+            <div class="menu menu-wide hidden" role="menu" aria-label="切断">
+              <label class="menu-check" role="menuitemcheckbox" aria-checked="false" title="見たい範囲を箱で切り出す"><input type="checkbox" id="chk-clip-box" />切断ボックス</label>
+              <div class="menu-sep" role="separator"></div>
+              <button role="menuitem" data-add-section="z" title="今見ている所の高さで水平に切る（上を消す）">水平断面を追加</button>
+              <button role="menuitem" data-add-section="x" title="今見ている所を通り、X 軸に直交する面で切る">垂直断面を追加（X）</button>
+              <button role="menuitem" data-add-section="y" title="今見ている所を通り、Y 軸に直交する面で切る">垂直断面を追加（Y）</button>
+              <button role="menuitem" id="btn-add-face-section" title="モデルの面・点群の平らな所・3点をクリックして、その面に平行に切る">面に合わせて断面を追加…</button>
+              <div class="menu-sep" role="separator"></div>
+              <label class="menu-check" role="menuitemcheckbox" aria-checked="true" title="箱の枠・断面の目印を出す。隠しても切断は効いたまま（B）"><input type="checkbox" id="chk-clip-guides" checked />枠を表示する（B）</label>
+              <button role="menuitem" id="btn-clip-off" title="切断ボックスと断面をすべてオフにする（断面は右のパネルの一覧に残ります）">切断をすべてオフ</button>
             </div>
           </div>
           <div class="menu-wrap">

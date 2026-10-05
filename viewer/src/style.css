@@ -383,6 +383,11 @@ h3 {
 .menu p {
   margin: 4px;
 }
+.menu-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line);
+}
 
 /* ツールバーのプロジェクト名から開く「プロジェクト・版」 */
 .popover {
@@ -448,6 +453,14 @@ h3 {
 .clip-panel {
   margin-top: 10px;
   border-top: 2px solid #ffa040;
+}
+/* 切断パネルの中の 1 つの切断（ボックス・断面・面断面） */
+.clip-block {
+  margin-top: 8px;
+}
+.clip-block + .clip-block {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
 }
 #tool-opts .steps {
   padding-left: 1.4em;
