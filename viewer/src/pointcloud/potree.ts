@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { dataUrl, fetchRange } from "../host";
-import type { DecodeRequest, DecodeResponse } from "./decoder.worker";
+import type { DecodeRequest, DecodeResponse, ExtraArray, ExtraAttributeLayout, ExtraAttributeType } from "./decoder.worker";
 import DecoderWorker from "./decoder.worker?worker";
 import { MaxHeap } from "./heap";
 import { ColorMode, PointCloudMaterial, SizeMode, VN_TEX_WIDTH } from "./material";
@@ -73,7 +73,26 @@ export interface PointCloudOptions {
   maxLoadedPoints: number;
   minNodePixelSize: number;
   maxConcurrentLoads: number;
+  /**
+   * 位置・色・強度のほかに読む属性（例: "classification"）。点群に無い名前は無視する。
+   * 読んだ属性は各ノードの geometry に `attr:<名前>` で付く（シェーダー・ジョブ結果の重ね表示用）。
+   * 既定は読まない（メモリを使わない）。
+   */
+  extraAttributes: string[];
 }
+
+/** 点群が持つ属性のうち、追加属性として読めるもの（1 要素の数値） */
+export interface PointAttributeInfo {
+  name: string;
+  type: ExtraAttributeType;
+  min: number;
+  max: number;
+}
+
+const EXTRA_TYPES: readonly ExtraAttributeType[] = ["int8", "uint8", "int16", "uint16", "int32", "uint32", "float", "double"];
+
+/** geometry に付ける追加属性の名前 */
+export const extraAttributeKey = (name: string) => `attr:${name}`;
 
 export interface PointPick {
   point: THREE.Vector3; // 表示座標
@@ -106,7 +125,10 @@ export class PotreePointCloud {
     rgbOffset: number;
     rgbShift: number;
     intensityOffset: number;
+    extras: ExtraAttributeLayout[];
   };
+  /** 追加属性として読めるもの（metadata.json から） */
+  readonly attributes: PointAttributeInfo[];
   private needsUpdate = true;
   private readonly lastCam = new THREE.Matrix4();
   private readonly tmpFrustum = new THREE.Frustum();
@@ -141,6 +163,7 @@ export class PotreePointCloud {
       maxLoadedPoints: 8_000_000,
       minNodePixelSize: 100,
       maxConcurrentLoads: 6,
+      extraAttributes: [],
       ...options,
     };
     this.octreeUrl = new URL(dataUrl(`${dir}/octree.bin`), location.href).href;
@@ -172,12 +195,18 @@ export class PotreePointCloud {
     }
     const rgb = meta.attributes.find((a) => a.name === "rgb" || a.name === "rgba");
     const inten = meta.attributes.find((a) => a.name === "intensity");
+    const builtin = new Set(["position", "rgb", "rgba", "intensity"]);
+    this.attributes = meta.attributes
+      .filter((a) => !builtin.has(a.name) && a.numElements === 1 && EXTRA_TYPES.includes(a.type as ExtraAttributeType))
+      .map((a) => ({ name: a.name, type: a.type as ExtraAttributeType, min: a.min?.[0] ?? 0, max: a.max?.[0] ?? 0 }));
+    const wanted = new Set(this.options.extraAttributes);
     this.layout = {
       bytesPerPoint: off,
       positionOffset: offsets.get("position") ?? 0,
       rgbOffset: rgb ? offsets.get(rgb.name)! : -1,
       rgbShift: rgb && Math.max(...rgb.max) > 255 ? 8 : 0,
       intensityOffset: inten ? offsets.get("intensity")! : -1,
+      extras: this.attributes.filter((a) => wanted.has(a.name)).map((a) => ({ name: a.name, offset: offsets.get(a.name)!, type: a.type })),
     };
 
     const u = this.material.uniforms;
@@ -303,7 +332,7 @@ export class PotreePointCloud {
       if (node.nodeType === NodeType.Proxy) await this.loadHierarchy(node);
       if (node.numPoints === 0 || node.byteSize === 0) {
         // 点の無いノード（子だけを持つ）は空の Points を置いて読込済みにする
-        this.attach(node, new Float32Array(0), null, null);
+        this.attach(node, new Float32Array(0), null, null, {});
         return;
       }
       const req: DecodeRequest = {
@@ -323,7 +352,7 @@ export class PotreePointCloud {
         w.postMessage(req);
       });
       if (res.error) throw new Error(res.error);
-      this.attach(node, res.position, res.color, res.intensity);
+      this.attach(node, res.position, res.color, res.intensity, res.extras);
     } catch (e) {
       node.failed = true;
       console.warn(`点群ノード ${node.name} を読めません`, e);
@@ -335,11 +364,12 @@ export class PotreePointCloud {
     }
   }
 
-  private attach(node: PCNode, position: Float32Array, color: Uint8Array | null, intensity: Uint16Array | null) {
+  private attach(node: PCNode, position: Float32Array, color: Uint8Array | null, intensity: Uint16Array | null, extras: Record<string, ExtraArray>) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(position, 3));
     if (color) g.setAttribute("rgba", new THREE.BufferAttribute(color, 4, true));
     if (intensity) g.setAttribute("intensity", new THREE.BufferAttribute(intensity, 1, true));
+    for (const [name, arr] of Object.entries(extras)) g.setAttribute(extraAttributeKey(name), new THREE.BufferAttribute(arr, 1));
     g.boundingBox = new THREE.Box3(new THREE.Vector3(0, 0, 0), node.box.max.clone().sub(node.box.min));
     g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
     const pts = new THREE.Points(g, this.material);

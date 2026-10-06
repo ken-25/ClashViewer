@@ -34,8 +34,9 @@ public sealed class ImportService
         public required string Folder { get; init; }
         public required string Dir { get; init; }
         public required string Work { get; init; }
-        public Process? Process { get; set; }
-        public bool Aborted { get; set; }
+        /// <summary>中断で取り消す（変換エンジンはプロセスツリーごと止まる）</summary>
+        public CancellationTokenSource Cancel { get; } = new();
+        public bool Aborted => Cancel.IsCancellationRequested;
     }
 
     public bool IsActive(string id) => _sessions.ContainsKey(id);
@@ -79,81 +80,24 @@ public sealed class ImportService
     {
         var s = Get(id);
         var outLocal = Path.Combine(s.Work, "pointcloud");
-        var (exe, prefix) = ResolveConverter();
         var potree = Path.Combine(_paths.Tools, "PotreeConverter", "PotreeConverter.exe");
         if (!File.Exists(potree)) throw new FileNotFoundException("PotreeConverter が見つかりません", potree);
 
-        var psi = new ProcessStartInfo(exe)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        foreach (var a in prefix) psi.ArgumentList.Add(a);
-        psi.ArgumentList.Add("e57");
+        var args = new List<string>();
         foreach (var i in inputs)
         {
-            psi.ArgumentList.Add("--input");
-            psi.ArgumentList.Add(i);
+            args.Add("--input");
+            args.Add(i);
         }
-        psi.ArgumentList.Add("--out");
-        psi.ArgumentList.Add(outLocal);
-        psi.ArgumentList.Add("--potree");
-        psi.ArgumentList.Add(potree);
-        psi.ArgumentList.Add("--work");
-        psi.ArgumentList.Add(Path.Combine(s.Work, "tmp"));
-        psi.Environment["PYTHONIOENCODING"] = "utf-8";
-        Log.Info($"変換エンジン起動: {exe} {string.Join(' ', psi.ArgumentList)}");
-
-        JsonObject? result = null;
-        string? error = null;
-        var stderr = new StringBuilder();
-        using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        proc.OutputDataReceived += (_, e) =>
+        args.AddRange(new[] { "--out", outLocal, "--potree", potree, "--work", Path.Combine(s.Work, "tmp") });
+        JsonObject result;
+        try
         {
-            if (string.IsNullOrWhiteSpace(e.Data)) return;
-            try
-            {
-                if (JsonNode.Parse(e.Data) is not JsonObject o) return;
-                switch (o["event"]?.GetValue<string>())
-                {
-                    case "result":
-                        result = o;
-                        break;
-                    case "error":
-                        error = o["message"]?.GetValue<string>() ?? "変換に失敗しました";
-                        Log.Error($"変換エンジン: {o["detail"]}");
-                        Emit(id, "pointcloud", o);
-                        break;
-                    default:
-                        Emit(id, "pointcloud", o);
-                        break;
-                }
-            }
-            catch
-            {
-                Log.Warn($"変換エンジンの出力を解釈できません: {e.Data}");
-            }
-        };
-        proc.ErrorDataReceived += (_, e) =>
+            result = await ConverterProcess.RunAsync(_paths, "e57", args, o => Emit(id, "pointcloud", o), s.Cancel.Token);
+        }
+        catch (OperationCanceledException)
         {
-            if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data);
-        };
-        proc.Start();
-        s.Process = proc;
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        await proc.WaitForExitAsync();
-        s.Process = null;
-        if (s.Aborted) throw new OperationCanceledException("取込を中断しました");
-        if (proc.ExitCode != 0 || result is null)
-        {
-            var tail = stderr.ToString();
-            if (tail.Length > 2000) tail = tail[^2000..];
-            throw new InvalidOperationException(error ?? $"変換エンジンが終了コード {proc.ExitCode} で終わりました。{tail}");
+            throw new OperationCanceledException("取込を中断しました");
         }
 
         // データフォルダへ写す（取込中フォルダには完成品だけを置く）
@@ -236,27 +180,11 @@ public sealed class ImportService
         return new JsonObject { ["files"] = pairs.Count, ["bytes"] = total };
     }
 
-    /// <summary>
-    /// 変換エンジンの場所。配布時は tools/converter/converter.exe。
-    /// 開発時は config/app.json の converterCommand（例: ["uv","run","--project","...","kasane-converter"]）を使う。
-    /// </summary>
-    private (string exe, string[] prefix) ResolveConverter()
-    {
-        var exe = Path.Combine(_paths.Tools, "converter", "converter.exe");
-        if (File.Exists(exe)) return (exe, Array.Empty<string>());
-        var cfg = Path.Combine(_paths.Config, "app.json");
-        if (File.Exists(cfg) && JsonUtil.ReadFile(cfg)?["converterCommand"] is JsonArray cmd && cmd.Count > 0)
-        {
-            var parts = cmd.Select(n => n!.GetValue<string>()).ToArray();
-            return (parts[0], parts[1..]);
-        }
-        throw new FileNotFoundException("変換エンジンが見つかりません", exe);
-    }
-
     public JsonObject Finish(string id, JsonObject manifest)
     {
         var s = Get(id);
-        manifest["schema"] = 1;
+        manifest["schema"] = Manifest.Schema;
+        Manifest.EnsureDefaults(manifest);
         manifest["id"] = id;
         manifest["createdBy"] = _user;
         manifest["createdAt"] = JsonUtil.NowIso();
@@ -280,15 +208,7 @@ public sealed class ImportService
     public void Abort(string id)
     {
         if (!_sessions.TryRemove(id, out var s)) return;
-        s.Aborted = true;
-        try
-        {
-            if (s.Process is { HasExited: false } p) p.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"変換エンジンを止められません: {ex.Message}");
-        }
+        s.Cancel.Cancel();
         // 変換エンジンの終了を少し待ってから片付ける
         Task.Run(async () =>
         {

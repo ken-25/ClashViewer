@@ -28,7 +28,7 @@
 | `dev/share/` | 開発・E2E 用のデータ（`config/`・`datasets/`・`events/`・`issues/`）。未コミット | — |
 | `dev/screenshots/` | E2E のスクリーンショット。未コミット | — |
 
-インストール先とデータの置き場所は [要件定義.md 5章](要件定義.md) を参照。
+インストール先とデータの置き場所は [要件定義.md 5章](要件定義.md) を参照。機能を足すときの基盤（ツールの登録・ジョブ・派生成果物）は [docs/architecture.md](docs/architecture.md)。
 
 ## 必要なもの
 
@@ -118,6 +118,7 @@ node e2e/smoke.mjs                             # Range・書込権限
 node e2e/import.mjs                            # 取込
 node e2e/features.mjs <最新版フォルダ> <前の版フォルダ>   # 全機能（2 人分・版またぎ）
 node e2e/perf.mjs <データセットのフォルダ>              # 性能（--root <データフォルダ> を指定可）
+node e2e/jobs.mjs <点群のある版のフォルダ>              # 処理（ジョブ）基盤（derived に 1 件増える）
 ```
 
 ## 実行

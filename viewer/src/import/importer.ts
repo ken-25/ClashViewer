@@ -11,6 +11,7 @@ import {
   type Manifest,
   type ModelEntry,
   type PointcloudEntry,
+  MANIFEST_SCHEMA,
 } from "../data/dataset";
 import {
   attributeSignature,
@@ -157,7 +158,7 @@ export class ImportJob {
       const alignment = freshBase?.alignment ?? autoAlignment(pointcloud, models, this.log);
       let diffSummary: Manifest["diff"] = null;
       const draft: Manifest = {
-        schema: 1,
+        schema: MANIFEST_SCHEMA,
         id: begin.id,
         folder: begin.folder,
         name: plan.name,
@@ -174,6 +175,9 @@ export class ImportJob {
         diff: null,
         importLog: this.log,
         comment: plan.comment,
+        // 派生成果物は版ごと（前の版の結果は引き継がない。入力が変わるので作り直す）
+        derived: [],
+        parent: null,
       };
       if (plan.base) {
         t.message = "前の版との差分を計算しています";

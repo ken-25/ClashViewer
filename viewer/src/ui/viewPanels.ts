@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { App, Tool } from "../app";
+import type { App } from "../app";
+import { DEFAULT_TOOL, getTool } from "../tools/toolRegistry";
 import { formatCount } from "../data/dataset";
 import { host } from "../host";
 import { hasState, NO_STOREY, setState, type StoreyNode } from "../model/layerTree";
@@ -300,14 +301,15 @@ export function renderMeasureList(app: App) {
   );
 }
 
-const TOOL_TITLE: Record<Exclude<Tool, "select">, string> = { measure: "計測", origin: "UCS（ユーザー座標系）", issue: "指摘を登録", align: "3点合わせ", plane: "面に合わせて断面を追加" };
+/** 右パネルに属性（#props）を出すツールか */
+const showsProps = (app: App) => getTool(app.tool).panel === "props";
 
 /**
  * 右側: いま何をしているか。選択ツールなら属性、ほかのツールならそのツールの設定と手順。
  * 切断を使っている間は、その設定を下に積む。
  */
 export function renderRight(app: App) {
-  const sel = app.tool === "select";
+  const sel = showsProps(app);
   $("#props").classList.toggle("hidden", !sel);
   const opts = $("#tool-opts");
   opts.classList.toggle("hidden", sel);
@@ -323,21 +325,27 @@ export function renderRight(app: App) {
 function updateRightStrip(app: App) {
   const el = document.getElementById("right-strip-label");
   if (!el) return;
-  const parts = [app.tool === "select" ? "属性" : TOOL_TITLE[app.tool]];
+  const parts = [getTool(app.tool).title];
   if (app.current && (app.clipping.boxOn || app.clipping.sections.length > 0)) parts.push("切断");
   el.textContent = parts.join("・");
 }
 
 /** 右側: 選んだツールの設定（選択ツールのときは何もしない） */
 export function renderToolOptions(app: App) {
-  const t = app.tool;
-  if (t === "select") return;
+  const def = getTool(app.tool);
+  if (def.panel === "props") return;
   const el = $("#tool-opts");
   const head = h("div", { class: "row panel-head" },
-    h("h2", { class: "grow" }, TOOL_TITLE[t]),
-    // 途中の作業を捨てるツール（3点合わせ・断面の追加）は「キャンセル」、結果が残るツールは「終了」
-    h("button", { class: "small", title: "選択ツールに戻る（Esc）", onclick: () => { if (t === "align") app.resetAlign(); app.setTool("select"); } }, t === "plane" || t === "align" ? "キャンセル" : "終了"));
-  if (t === "plane") {
+    h("h2", { class: "grow" }, def.title),
+    // 途中の作業を捨てるツールは「キャンセル」、結果が残るツールは「終了」（作業の片付けは各ツールの onExit）
+    h("button", { class: "small", title: "選択ツールに戻る（Esc）", onclick: () => app.setTool(DEFAULT_TOOL) }, def.exitLabel ?? "終了"));
+  if (def.renderPanel) def.renderPanel(app, el, head);
+  else mount(el, head);
+}
+
+/** 断面（面に合わせる・3点）ツールの右パネル */
+export function renderPlanePanel(app: App, el: HTMLElement, head: HTMLElement) {
+  {
     const method = app.planeMethod;
     mount(
       el,
@@ -361,35 +369,36 @@ export function renderToolOptions(app: App) {
         : "3 点を通る面で切ります。Backspace で 1 点戻せます。"),
       h("p", { class: "small muted" }, "クリックした側（カメラ側）を消します。位置・残す側は、できた断面を下の「切断」で調整します。"),
     );
-    return;
   }
-  if (t === "align") {
-    renderAlignPanel(app, el, head);
-    return;
-  }
-  if (t === "measure") {
-    const last = app.measure.list[app.measure.list.length - 1];
-    mount(
-      el,
-      head,
-      measureOptions(app),
-      last ? [h("h3", null, "直前の結果"), measureItem(app, last)] : null,
-      h("p", { class: "small muted" }, "結果は左の「計測」タブに一覧します。キー操作は上の案内と「?」にあります。"),
-    );
-    return;
-  }
-  if (t === "origin") {
-    mount(
-      el,
-      head,
-      h("ol", { class: "small steps" },
-        h("li", null, "UCS の原点にする点をクリック"),
-        h("li", null, "X 軸の向きにする点をクリック（Esc で向きは変えずに終了）")),
-      h("p", { class: "small muted" }, "Z 軸は常に鉛直上です。点群・モデルのどちらの点でも決められます。UCS はプロジェクトごとにこの PC に保存します。"),
-      ucsStatus(app),
-    );
-    return;
-  }
+}
+
+/** 計測ツールの右パネル */
+export function renderMeasurePanel(app: App, el: HTMLElement, head: HTMLElement) {
+  const last = app.measure.list[app.measure.list.length - 1];
+  mount(
+    el,
+    head,
+    measureOptions(app),
+    last ? [h("h3", null, "直前の結果"), measureItem(app, last)] : null,
+    h("p", { class: "small muted" }, "結果は左の「計測」タブに一覧します。キー操作は上の案内と「?」にあります。"),
+  );
+}
+
+/** UCS ツールの右パネル */
+export function renderOriginPanel(app: App, el: HTMLElement, head: HTMLElement) {
+  mount(
+    el,
+    head,
+    h("ol", { class: "small steps" },
+      h("li", null, "UCS の原点にする点をクリック"),
+      h("li", null, "X 軸の向きにする点をクリック（Esc で向きは変えずに終了）")),
+    h("p", { class: "small muted" }, "Z 軸は常に鉛直上です。点群・モデルのどちらの点でも決められます。UCS はプロジェクトごとにこの PC に保存します。"),
+    ucsStatus(app),
+  );
+}
+
+/** 指摘の登録ツールの右パネル */
+export function renderIssueToolPanel(_app: App, el: HTMLElement, head: HTMLElement) {
   mount(el, head, h("p", { class: "small" }, "指摘する位置を 3D 画面でクリックすると、登録画面が開きます。"), h("p", { class: "small muted" }, "今の視点・表示の状態・画面の画像も一緒に保存します。"));
 }
 
@@ -608,7 +617,8 @@ function normalLabel(n: THREE.Vector3): string {
 /** 3点合わせの「水平を保つ」（パネルを作り直しても保つ） */
 let alignLevelOnly = true;
 
-function renderAlignPanel(app: App, el: HTMLElement, head: HTMLElement) {
+/** 3点合わせツールの右パネル */
+export function renderAlignPanel(app: App, el: HTMLElement, head: HTMLElement) {
   const a = app.align;
   const n = Math.min(a.model.length, a.cloud.length);
   const step = a.model.length + a.cloud.length;

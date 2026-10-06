@@ -11,6 +11,7 @@ public sealed class MainForm : Form
     private readonly string _user;
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private readonly ImportService _imports;
+    private readonly JobService _jobs;
     private readonly ResourceServer _server;
     private readonly Bridge _bridge;
 
@@ -27,8 +28,10 @@ public sealed class MainForm : Form
         _user = user;
         var local = new LocalFiles();
         _imports = new ImportService(paths, user);
+        var datasets = new DatasetStore(paths);
+        _jobs = new JobService(paths, user, dev, datasets);
         _server = new ResourceServer(paths, local, _imports);
-        _bridge = new Bridge(paths, user, dev, local, _imports, new DatasetStore(paths), new EventStore(paths, user), this);
+        _bridge = new Bridge(paths, user, dev, local, _imports, _jobs, datasets, new EventStore(paths, user), this);
 
         Text = "3D施工検討Viewer Kasane";
         // タイトルバー・タスクバーのアイコン（app.ico を同梱したときだけ。csproj 参照）
@@ -41,7 +44,11 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Controls.Add(_web);
         Load += async (_, _) => await InitAsync();
-        FormClosing += (_, _) => _imports.AbortAll();
+        FormClosing += (_, _) =>
+        {
+            _imports.AbortAll();
+            _jobs.AbortAll();
+        };
     }
 
     private bool ReadConfigBool(string key, bool fallback)

@@ -1,6 +1,9 @@
 import "./style.css";
 import * as THREE from "three";
-import { App, type Tool } from "./app";
+import { App } from "./app";
+// 標準のツールを登録する（App を作る前に）
+import "./modes/builtinTools";
+import { DEFAULT_TOOL, getTool, toolbarTools } from "./tools/toolRegistry";
 import { formatCount } from "./data/dataset";
 import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
@@ -41,7 +44,7 @@ async function main() {
   /** プロジェクトを開いていないと使えないボタン（ツール・見え方）を、見た目も無効にする */
   const syncEnabled = () => {
     const off = !app.current;
-    document.querySelectorAll<HTMLButtonElement>("[data-tool]:not([data-tool=select]), .needs-data").forEach((b) => {
+    document.querySelectorAll<HTMLButtonElement>(".needs-tool-data, .needs-data").forEach((b) => {
       b.dataset.title ??= b.title;
       b.disabled = off;
       b.title = off ? `プロジェクトを開くと使えます。${b.dataset.title}` : b.dataset.title;
@@ -103,14 +106,21 @@ async function main() {
   app.on("tool", () => renderRight(app));
   app.on("pcstats", () => updatePcStats(app));
 
-  // ツールバー（モードの切替）
-  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) =>
+  // ツールバー（モードの切替）。ボタンは登録されたツールから作る
+  const toolGroup = $("#tool-group");
+  for (const def of toolbarTools()) {
+    const b = document.createElement("button");
+    b.dataset.tool = def.id;
+    b.title = def.toolbar!.tooltip;
+    b.textContent = def.toolbar!.label;
+    if (!def.worksWithoutData) b.classList.add("needs-tool-data");
+    b.classList.toggle("active", def.id === app.tool);
     b.addEventListener("click", () => {
-      if (!app.current && b.dataset.tool !== "select") return;
-      if (b.dataset.tool === "align") app.resetAlign();
-      app.setTool(b.dataset.tool as Tool);
-    }),
-  );
+      if (!app.current && !def.worksWithoutData) return;
+      app.setTool(def.id);
+    });
+    toolGroup.appendChild(b);
+  }
   // 切断メニュー: 足す・オフ・枠の表示はここだけ（右のパネルは今ある切断の調整）
   $("#chk-clip-box").addEventListener("change", (e) => app.setClipBox((e.target as HTMLInputElement).checked));
   document.querySelectorAll<HTMLButtonElement>("[data-add-section]").forEach((b) =>
@@ -198,7 +208,7 @@ async function main() {
   });
   canvas.addEventListener("dblclick", async (e) => {
     // 計測中のダブルクリックは折れ線の確定に使う（注視点は動かさない）
-    if (app.tool === "measure") return;
+    if (getTool(app.tool).capturesDblClick) return;
     const p = await app.picker.pick(e.clientX, e.clientY);
     if (!p) return;
     // 注視点をクリック位置へ（そこを中心に回る）
@@ -211,37 +221,14 @@ async function main() {
     if ((e.target as HTMLElement)?.closest("input,textarea,select")) return;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     const key = e.key.toLowerCase();
-    const measuring = app.tool === "measure" && app.measure.hasPending;
     if (document.querySelector("dialog[open]")) return;
+    // 開いているメニュー・パネルは、それぞれの処理が先に閉じる
+    if (e.key === "Escape" && anyPopupOpen()) return;
+    // 今のツールのキー操作が先（処理したら共通のキー操作はしない）
+    if (getTool(app.tool).onKey?.(app, e)) return;
     if (e.key === "Escape") {
-      // 開いているメニュー・パネルは、それぞれの処理が先に閉じる
-      if (anyPopupOpen()) return;
-      if (app.tool === "align") app.resetAlign();
-      // 計測の作図中なら、距離は 1 点目を取り消し、折れ線はそこまでで確定する（ツールはそのまま）。
-      // もう一度でツールを終える
-      if (measuring) {
-        if (app.measure.kind === "polyline") app.finishMeasure();
-        else {
-          app.measure.cancel();
-          app.updateToolHint();
-          app.snap.refresh();
-        }
-      } else {
-        app.setTool("select");
-      }
-    } else if (e.key === "Enter" && measuring) {
-      e.preventDefault();
-      app.finishMeasure();
-    } else if (e.key === "Backspace" && measuring) {
-      e.preventDefault();
-      app.measure.undo();
-      app.updateToolHint();
-      app.snap.refresh();
-    } else if (e.key === "Backspace" && app.tool === "plane" && app.planePts.length) {
-      e.preventDefault();
-      app.undoPlanePoint();
-    } else if (e.key === "Shift" && app.tool === "measure") {
-      app.setShiftHeld(true);
+      // 途中の作業の片付けは各ツールの onExit
+      app.setTool(DEFAULT_TOOL);
     } else if (e.key === "Tab" && app.snap.active && !e.ctrlKey && !e.altKey) {
       // スナップ候補の切替（フォーカスは移さない）
       e.preventDefault();
@@ -253,8 +240,6 @@ async function main() {
     } else if (key === "s" && plain && !e.shiftKey && app.snap.active) {
       app.snap.setEnabled(!app.snap.enabled);
       renderToolOptions(app);
-    } else if (app.tool === "measure" && plain && !e.shiftKey && ["x", "y", "z"].includes(key)) {
-      app.toggleAxisLock(key as "x" | "y" | "z");
     } else if (key === "p" && plain && app.current) {
       toggleProjection();
     } else if (key === "b" && plain && !e.shiftKey && app.current) {
@@ -291,7 +276,7 @@ async function main() {
   });
 
   // プロジェクト一覧と保存先の変化は互いに依存しないので同時に取る（起動時の RPC 待ちを 1 往復分減らす）
-  await Promise.all([app.refreshDatasets(), poll()]);
+  await Promise.all([app.refreshDatasets(), poll(), app.attachJobs().catch((e) => console.warn(e))]);
   // 前回のプロジェクトを自動で開くときは、最初の描画の前に読み込み中にする（「プロジェクトを開いてください」を出さない）
   const last = localStorage.getItem("lastDataset");
   const start = app.datasets.find((d) => d.folder === last);

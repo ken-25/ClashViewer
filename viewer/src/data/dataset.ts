@@ -76,6 +76,38 @@ export interface DiffSummary {
   pointcloudChanged: boolean;
 }
 
+/**
+ * 派生成果物（ジョブの結果）。公開後に manifest の derived へ追記する（app/Kasane.Host/JobService.cs）。
+ * ファイルは datasets/<版>/derived/<id>/ の下。版の本体（点群・モデル）は書き換えない。
+ */
+export interface DerivedEntry {
+  id: string;
+  /** ジョブの種類（JobService.Kinds の id） */
+  kind: string;
+  label: string;
+  /** 版のフォルダ内の相対パス（derived/<id>） */
+  dir: string;
+  /** 版のフォルダ内の相対パス */
+  files: string[];
+  params: Record<string, unknown>;
+  /** 変換エンジンの result（種類ごとの形） */
+  result: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  startedAt?: string;
+  appVersion?: string;
+}
+
+/** 既存の版から作った版の元（点群の削除・清掃など。取込で作った版は null） */
+export interface ParentRef {
+  folder: string;
+  jobKind: string;
+  note?: string;
+}
+
+/** 今の manifest の版。1→2 は derived・parent の追加だけ（migrateManifest） */
+export const MANIFEST_SCHEMA = 2;
+
 export interface Manifest {
   schema: number;
   id: string;
@@ -96,6 +128,44 @@ export interface Manifest {
   diff: DiffSummary | null;
   importLog: { level: string; message: string }[];
   comment?: string;
+  /** schema 2: 派生成果物（追記のみ） */
+  derived: DerivedEntry[];
+  /** schema 2: 既存の版から作ったときの元 */
+  parent: ParentRef | null;
+}
+
+/**
+ * 読み込んだ manifest を今の形に揃える（古い schema の版も同じコードで扱えるように）。
+ * ファイルは書き換えない。対応していない新しい schema は読めないので例外にする。
+ */
+export function migrateManifest(raw: any): Manifest {
+  const m = { ...raw } as Manifest;
+  const schema = typeof m.schema === "number" ? m.schema : 1;
+  if (schema > MANIFEST_SCHEMA) throw new Error(`この版（schema ${schema}）は新しいアプリで作られています。アプリを更新してください。`);
+  if (!Array.isArray(m.derived)) m.derived = [];
+  if (m.parent === undefined) m.parent = null;
+  if (!Array.isArray(m.models)) m.models = [];
+  if (!Array.isArray(m.importLog)) m.importLog = [];
+  return m;
+}
+
+/** 一覧を揃える。読めない版は外して、理由を返す（一覧全体を止めない） */
+export function migrateManifests(list: any[]): { ok: Manifest[]; skipped: { folder: string; reason: string }[] } {
+  const ok: Manifest[] = [];
+  const skipped: { folder: string; reason: string }[] = [];
+  for (const raw of list) {
+    try {
+      ok.push(migrateManifest(raw));
+    } catch (e) {
+      skipped.push({ folder: String(raw?.folder ?? "?"), reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return { ok, skipped };
+}
+
+/** 派生成果物のファイルのデータ相対パス */
+export function derivedRel(m: Manifest, entry: DerivedEntry, file: string): string {
+  return `datasets/${m.folder}/${file.startsWith(entry.dir + "/") ? file : `${entry.dir}/${file}`}`;
 }
 
 export function fileRel(owner: string, rel: string): string {

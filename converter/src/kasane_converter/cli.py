@@ -20,7 +20,7 @@ from pathlib import Path
 import laspy
 import numpy as np
 
-from . import __version__, progress
+from . import __version__, jobs, progress
 from .e57 import E57FormatError, E57Reader, check_signature
 from .potree import run_potree
 
@@ -239,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     i = sub.add_parser("info", help="E57 の概要を出す")
     i.add_argument("--input", action="append", required=True)
     i.set_defaults(func=cmd_info)
+    # 公開済みの版に対する処理（ジョブ）。引数は全ジョブ共通（jobs/__init__.py）
+    jobs.add_parsers(sub)
     args = ap.parse_args(argv)
     return args.func(args)
 

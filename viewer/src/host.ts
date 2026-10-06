@@ -74,6 +74,38 @@ export interface StorageState {
 
 export type OpenableFolder = FolderKind | "local" | "logs" | "work";
 
+export interface JobKindInfo {
+  id: string;
+  label: string;
+}
+
+export interface ActiveJob {
+  jobId: string;
+  kind: string;
+  folder: string;
+  startedAt: string;
+  last: JobProgress | null;
+}
+
+/**
+ * 処理（ジョブ）の通知 job.progress の data（app/Kasane.Host/JobService.cs）。
+ * stage / progress / log / error は変換エンジンの JSON 行そのまま。done は manifest の derived に追記した 1 件。
+ */
+export type JobProgress = { jobId: string; kind: string; folder: string } & (
+  | { event: "stage"; stage: string; label: string; weight: number }
+  | { event: "progress"; stage: string; done: number; total: number; message?: string }
+  | { event: "log"; level: string; message: string }
+  | { event: "error"; message: string }
+  | { event: "done"; entry: import("./data/dataset").DerivedEntry }
+  | { event: "failed"; message: string }
+  | { event: "aborted" }
+);
+
+/** 処理の通知を受ける。戻り値で購読をやめる */
+export function onJobProgress(cb: (p: JobProgress) => void): () => void {
+  return on("job.progress", cb);
+}
+
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
 interface WebView {
@@ -166,6 +198,14 @@ export const host = {
   importFinish: (id: string, manifest: any) => call<any>("importFinish", { id, manifest }),
   importAbort: (id: string) => call<boolean>("importAbort", { id }),
   updateAlignment: (folder: string, alignment: any) => call<any>("updateAlignment", { folder, alignment }),
+  /** 使える処理（ジョブ）の種類 */
+  jobKinds: () => call<JobKindInfo[]>("jobKinds"),
+  /** 実行中の処理（画面を開き直したときに進捗を戻す） */
+  jobList: () => call<ActiveJob[]>("jobList"),
+  /** 公開済みの版に対する処理を裏で始める。進捗・結果は onJobProgress で届く */
+  jobStart: (kind: string, folder: string, params: Record<string, unknown> = {}) =>
+    call<{ jobId: string; kind: string; folder: string }>("jobStart", { kind, folder, params }),
+  jobAbort: (jobId: string) => call<boolean>("jobAbort", { jobId }),
   eventsAppend: (event: any) => call<any>("eventsAppend", { event }),
   eventsRead: (offsets: Record<string, number> | null) =>
     call<{ events: any[]; offsets: Record<string, number> }>("eventsRead", { offsets }),

@@ -15,13 +15,8 @@
         <button id="current-title" class="current-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="site-panel" title="プロジェクト・版を開く・取り込む">
           <span id="current-name">プロジェクトを選んでください</span> ▾
         </button>
-        <div class="group" role="group" aria-label="ツール">
-          <button data-tool="select" class="active" title="要素を選んで属性を見る（Esc）">選択</button>
-          <button data-tool="measure" title="距離・折れ線を測る。軸に沿わせると X/Y/Z 方向に吸着（X/Y/Z キーで固定）">計測</button>
-          <button data-tool="origin" title="ユーザー座標系（UCS）を決める。1点目=原点、2点目=X軸の向き">UCS</button>
-          <button data-tool="issue" title="クリックした位置に指摘を登録">指摘を登録</button>
-          <button data-tool="align" title="モデルと点群の対応する3点で合わせる">3点合わせ</button>
-        </div>
+        <!-- ボタンは登録されたツールから作る（src/modes/builtinTools.ts・src/tools/toolRegistry.ts） -->
+        <div id="tool-group" class="group" role="group" aria-label="ツール"></div>
         <div class="toolbar-end">
           <button id="btn-help" title="操作キーの一覧（F1）" aria-label="操作キーの一覧">?</button>
           <button id="btn-settings" title="表示名・保存先（プロジェクトフォルダ・設定データフォルダ）">設定</button>

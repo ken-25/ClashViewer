@@ -1,8 +1,9 @@
 import * as FRAGS from "@thatopen/fragments";
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { fetchBytes, fetchJson, host, type HostContext } from "./host";
-import { fileRel, groupBySite, ifcToScene, sceneToWorld, worldToScene, type Manifest } from "./data/dataset";
+import { fetchBytes, fetchJson, host, onJobProgress, type HostContext, type JobProgress } from "./host";
+import { DEFAULT_TOOL, getTool, type ToolId } from "./tools/toolRegistry";
+import { fileRel, groupBySite, ifcToScene, migrateManifests, sceneToWorld, worldToScene, type Manifest } from "./data/dataset";
 import type { DatasetDiff } from "./data/diff";
 import { foldIssues, type Issue, type IssueEvent, type IssueView } from "./issues/issues";
 import { ModelManager, type LoadedModel } from "./model/models";
@@ -18,8 +19,40 @@ import { LocalFrame, MeasureTool, type Axis, type MeasureKind } from "./tools/me
 import { SnapCursor } from "./tools/snapCursor";
 import { $ } from "./ui/dom";
 
-/** plane: 面に合わせた断面を足す（ツールバーには出さず、切断メニュー・切断パネルから始める） */
-export type Tool = "select" | "measure" | "origin" | "issue" | "align" | "plane";
+/** ツールの ID。定義は tools/toolRegistry.ts に登録する（標準のツールは modes/builtinTools.ts） */
+export type Tool = ToolId;
+
+/**
+ * App が出す通知の名前。購読は app.on(名前, cb)。足すときはここに追記する（打ち間違いを型で止める）。
+ * jobs: 処理（ジョブ）の進捗・完了（app.jobs が変わった）
+ */
+export type AppTopic =
+  | "datasets"
+  | "dataset"
+  | "display"
+  | "nav"
+  | "diff"
+  | "selection"
+  | "measures"
+  | "clip"
+  | "align"
+  | "tool"
+  | "pcstats"
+  | "issues"
+  | "issue:new"
+  | "issue:open"
+  | "jobs";
+
+/** 実行中・直近に終わった処理（ジョブ）の状態 */
+export interface JobState {
+  jobId: string;
+  kind: string;
+  folder: string;
+  status: "running" | "done" | "failed" | "aborted";
+  /** 最後の段階・進捗（stage / progress の通知） */
+  last: JobProgress | null;
+  message?: string;
+}
 
 export type PlaneMethod = "face" | "points";
 
@@ -84,7 +117,7 @@ export class App {
   datasets: Manifest[] = [];
   current: Manifest | null = null;
   pc: PotreePointCloud | null = null;
-  tool: Tool = "select";
+  tool: Tool = DEFAULT_TOOL;
   /** 計測の区間を固定する軸（X/Y/Z キーで固定、もう一度で解除）。null なら軸に近いときだけ吸着 */
   axisLock: Axis | null = null;
   /** Shift を押している間（最も大きい成分の軸に固定） */
@@ -103,8 +136,11 @@ export class App {
   alignPreview: THREE.Matrix4 | null = null;
   pointBudget = 3_000_000;
   nav: NavSettings = loadNavSettings();
-  private listeners = new Map<string, Set<() => void>>();
-  private originStep = 0;
+  private listeners = new Map<AppTopic, Set<() => void>>();
+  /** 処理（ジョブ）の状態。jobId → 状態。終わったものも画面を閉じるまで残す */
+  readonly jobs = new Map<string, JobState>();
+  /** UCS ツールの手順（0: 原点 / 1: X 軸の向き） */
+  originStep = 0;
   /** 断面の決め方。face: 面（モデルの面・点群の平らな所）を 1 クリック / points: 3点指定 */
   planeMethod: PlaneMethod = "face";
   /** パネルで選んだ決め方（自動で 3点指定に切り替わっても、次はこちらから始める） */
@@ -154,13 +190,58 @@ export class App {
     if (saved > 0) this.pointBudget = saved;
   }
 
-  on(topic: string, cb: () => void) {
+  /** 通知を購読する。戻り値で購読をやめる */
+  on(topic: AppTopic, cb: () => void): () => void {
     if (!this.listeners.has(topic)) this.listeners.set(topic, new Set());
     this.listeners.get(topic)!.add(cb);
+    return () => this.listeners.get(topic)?.delete(cb);
   }
 
-  emit(topic: string) {
+  emit(topic: AppTopic) {
     this.listeners.get(topic)?.forEach((cb) => cb());
+  }
+
+  // ---- 処理（ジョブ） ----
+
+  /** 公開済みの版に対する処理を始める。進捗は "jobs" の通知と app.jobs で追う */
+  async startJob(kind: string, folder: string, params: Record<string, unknown> = {}): Promise<string> {
+    const r = await host.jobStart(kind, folder, params);
+    this.jobs.set(r.jobId, { jobId: r.jobId, kind: r.kind, folder: r.folder, status: "running", last: null });
+    this.emit("jobs");
+    return r.jobId;
+  }
+
+  async abortJob(jobId: string): Promise<void> {
+    await host.jobAbort(jobId);
+  }
+
+  /** ホストの job.progress を状態に畳む。完了したら一覧と開いている版の manifest を読み直す */
+  private async onJobProgress(p: JobProgress) {
+    const cur = this.jobs.get(p.jobId) ?? { jobId: p.jobId, kind: p.kind, folder: p.folder, status: "running" as const, last: null };
+    if (p.event === "stage" || p.event === "progress") cur.last = p;
+    else if (p.event === "log") return;
+    else if (p.event === "error") cur.message = p.message;
+    else if (p.event === "failed") Object.assign(cur, { status: "failed", message: p.message });
+    else if (p.event === "aborted") cur.status = "aborted";
+    else if (p.event === "done") {
+      // 一覧を読み直してから done にする（done を見た側が古い一覧を読まないように）
+      await this.refreshDatasets();
+      cur.status = "done";
+      // 開いている版なら derived を差し替える（版の本体は変わらないので開き直さない）
+      const fresh = this.datasets.find((d) => d.folder === p.folder);
+      if (this.current && fresh && this.current.folder === p.folder) this.current.derived = fresh.derived;
+    }
+    this.jobs.set(p.jobId, cur);
+    this.emit("jobs");
+  }
+
+  /** 起動時: 実行中の処理を拾い、以降の通知を受ける */
+  async attachJobs() {
+    onJobProgress((p) => void this.onJobProgress(p).catch((e) => console.warn(e)));
+    for (const j of await host.jobList()) {
+      this.jobs.set(j.jobId, { jobId: j.jobId, kind: j.kind, folder: j.folder, status: "running", last: j.last });
+    }
+    if (this.jobs.size) this.emit("jobs");
   }
 
   setHint(msg: string) {
@@ -183,7 +264,9 @@ export class App {
   // ---- データセット ----
 
   async refreshDatasets() {
-    this.datasets = (await host.listDatasets()) as Manifest[];
+    const { ok, skipped } = migrateManifests(await host.listDatasets());
+    for (const s of skipped) console.warn(`版 ${s.folder} を読めません: ${s.reason}`);
+    this.datasets = ok;
     this.emit("datasets");
   }
 
@@ -400,46 +483,30 @@ export class App {
 
   // ---- ツール ----
 
+  /** ツールを切り替える。前のツールの onExit → 次のツールの onEnter（同じツールの選び直しも同じ） */
   setTool(t: Tool) {
+    const next = getTool(t);
+    getTool(this.tool).onExit?.(this);
     this.tool = t;
-    this.measure.cancel();
-    this.originStep = 0;
-    this.planeMethod = this.planeMethodPref;
-    this.planePts = [];
-    this.planeMarks.set([]);
+    next.onEnter?.(this);
     document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
     // 計測・合わせ中は指摘のピンをクリックで反応させない（ピンの下の点を拾えるように）
-    document.body.classList.toggle("tool-active", t !== "select");
+    document.body.classList.toggle("tool-active", t !== DEFAULT_TOOL);
     this.updateToolHint();
     this.snap.refresh();
     this.emit("tool");
   }
 
-  /** ツールの案内（計測は今の手順と区間の軸で変わる）。今の手順で使うキーだけを出し、一覧は「?」にまとめる */
+  /** 断面ツールに入るとき: パネルで選んだ決め方から始める */
+  resetPlaneTool() {
+    this.planeMethod = this.planeMethodPref;
+    this.planePts = [];
+    this.planeMarks.set([]);
+  }
+
+  /** ツールの案内。今の手順で使うキーだけを出し、一覧は「?」にまとめる */
   updateToolHint() {
-    const t = this.tool;
-    const keys = "Tab 候補切替・Alt フリー";
-    if (t === "measure") {
-      const m = this.measure;
-      const lock = this.axisLock ? `（${this.axisLock.toUpperCase()} 方向に固定）` : "";
-      if (m.kind === "distance") {
-        const step = m.hasPending ? `2点目をクリック${lock}` : "1点目をクリック";
-        this.setHint(`距離: ${step}　${keys}・X/Y/Z 軸固定・Esc ${m.hasPending ? "キャンセル" : "終了"}`);
-      } else {
-        const step = !m.hasPending ? "1点目をクリック" : m.pointCount === 1 ? `2点目をクリック${lock}` : `次の点をクリック${lock}・Enter/ダブルクリックで確定`;
-        this.setHint(`折れ線: ${step}　${keys}・Backspace 1点戻す・Esc ${m.hasPending ? "確定" : "終了"}`);
-      }
-      return;
-    }
-    const hints: Record<Tool, string> = {
-      select: "",
-      measure: "",
-      origin: this.originStep === 0 ? `UCS: 原点にする点をクリック　${keys}・Esc 終了` : `UCS: X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${keys}`,
-      issue: "指摘する位置をクリック　Esc 終了",
-      align: `3点合わせ: 右のパネルの手順に従ってください　${keys}・Esc キャンセル`,
-      plane: `${this.planeMethod === "face" ? "断面（面に合わせる）" : "断面（3点）"}: ${this.planeStepHint()}`,
-    };
-    this.setHint(hints[t]);
+    this.setHint(getTool(this.tool).hint(this));
   }
 
   /** 計測の種類（距離・折れ線）を変える */
@@ -498,15 +565,7 @@ export class App {
   /** スナップの候補を探す対象（スナップを使わないツールは null） */
   private snapOptions(): { models: boolean; cloud: boolean } | null {
     if (!this.current) return null;
-    const t = this.tool;
-    if (t === "align") {
-      const needModel = this.align.model.length <= this.align.cloud.length;
-      return { models: needModel, cloud: !needModel };
-    }
-    if (t === "measure" || t === "origin") return { models: true, cloud: true };
-    // 断面の 3点指定は角・端に吸着させる（面からのときは面の法線が要るのでスナップしない）
-    if (t === "plane" && this.planeMethod === "points") return { models: true, cloud: true };
-    return null;
+    return getTool(this.tool).snap?.(this) ?? null;
   }
 
   /**
@@ -554,18 +613,10 @@ export class App {
   }
 
   async handleClick(e: MouseEvent) {
-    const t = this.tool;
+    const def = getTool(this.tool);
     // 候補を探す間に Shift を離しても、クリックした瞬間の状態で決める
     const shift = e.shiftKey;
-    // 折れ線: 最後の点をもう一度クリック（ダブルクリック）で確定
-    if (t === "measure" && this.measure.kind === "polyline" && this.measure.pointCount >= 2) {
-      const last = this.picker.project(this.measure.pendingPoint!);
-      const rect = this.viewer.canvas.getBoundingClientRect();
-      if (Math.hypot(e.clientX - rect.left - last.x, e.clientY - rect.top - last.y) <= 5) {
-        this.finishMeasure();
-        return;
-      }
-    }
+    if (def.preClick?.(this, e)) return;
     let p: Pick | null;
     let snapLabel: string | null = null;
     if (this.snap.active) {
@@ -577,45 +628,40 @@ export class App {
     }
     this.lastPick = p;
     this.showCoord(p);
-    if (!p) {
-      if (t === "select") await this.select(null);
-      if (t === "plane") this.setHint(`断面: 何も無い所です。${this.planeStepHint()}`);
-      return;
+    await def.onClick?.(this, p, e, { snapLabel, shift });
+  }
+
+  /** 計測ツールのクリック: 点を足す */
+  addMeasurePoint(p: Pick, shift: boolean, snapLabel: string | null) {
+    this.measure.add(p.point, sourceName(p), this.segmentAxis(p.point, shift), snapLabel);
+    this.updateToolHint();
+    // 続けて仮の線を出す（カーソルは動いていないので同じ候補を使う）
+    this.snap.refresh();
+  }
+
+  /** UCS ツールのクリック: 1 点目で原点、2 点目で X 軸の向き */
+  addOriginPoint(p: Pick) {
+    if (this.originStep === 0) {
+      this.frame.set(p.point);
+      this.originStep = 1;
+      this.updateToolHint();
+    } else {
+      this.frame.set(this.frame.origin, p.point);
+      this.saveFrame();
+      this.setTool(DEFAULT_TOOL);
     }
-    switch (t) {
-      case "select":
-        await this.select(p);
-        break;
-      case "measure": {
-        this.measure.add(p.point, sourceName(p), this.segmentAxis(p.point, shift), snapLabel);
-        this.updateToolHint();
-        // 続けて仮の線を出す（カーソルは動いていないので同じ候補を使う）
-        this.snap.refresh();
-        break;
-      }
-      case "origin":
-        if (this.originStep === 0) {
-          this.frame.set(p.point);
-          this.originStep = 1;
-          this.updateToolHint();
-        } else {
-          this.frame.set(this.frame.origin, p.point);
-          this.saveFrame();
-          this.setTool("select");
-        }
-        this.saveFrame();
-        this.emit("measures");
-        break;
-      case "issue":
-        this.emit("issue:new");
-        break;
-      case "align":
-        this.addAlignPick(p);
-        break;
-      case "plane":
-        this.planeClick(p, e);
-        break;
-    }
+    this.saveFrame();
+    this.emit("measures");
+  }
+
+  /** 折れ線: 最後の点をもう一度クリック（ダブルクリック）で確定。確定したら true */
+  finishPolylineAtLastPoint(e: MouseEvent): boolean {
+    if (this.measure.kind !== "polyline" || this.measure.pointCount < 2) return false;
+    const last = this.picker.project(this.measure.pendingPoint!);
+    const rect = this.viewer.canvas.getBoundingClientRect();
+    if (Math.hypot(e.clientX - rect.left - last.x, e.clientY - rect.top - last.y) > 5) return false;
+    this.finishMeasure();
+    return true;
   }
 
   /** 切断ボックスのオン・オフ（3D 画面左上の「切断」メニュー） */
@@ -683,7 +729,7 @@ export class App {
    * - 3点指定: 3 点目で面を決める。
    * 足せたら選択ツールに戻る。
    */
-  private planeClick(p: Pick, e: MouseEvent) {
+  planeClick(p: Pick, e: MouseEvent) {
     if (this.planeMethod === "points") {
       this.addPlanePoint(p.point);
       return;
@@ -742,10 +788,10 @@ export class App {
     // 平行投影では、カメラの位置より視線の向きの方が確か
     if (this.viewer.camera instanceof THREE.OrthographicCamera) this.viewer.camera.getWorldDirection(toCamera).negate();
     this.clipping.addFaceSection(point, normal, toCamera, tolDeg);
-    this.setTool("select");
+    this.setTool(DEFAULT_TOOL);
   }
 
-  private saveFrame() {
+  saveFrame() {
     if (!this.current) return;
     localStorage.setItem(`frame:${this.current.site}`, JSON.stringify(this.frame.serialize(this.current.origin)));
   }

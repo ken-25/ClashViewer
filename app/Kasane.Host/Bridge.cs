@@ -14,22 +14,25 @@ public sealed class Bridge
     private readonly bool _dev;
     private readonly LocalFiles _local;
     private readonly ImportService _imports;
+    private readonly JobService _jobs;
     private readonly DatasetStore _datasets;
     private readonly EventStore _events;
     private readonly Form _owner;
     private CoreWebView2? _core;
 
-    public Bridge(AppPaths paths, string user, bool dev, LocalFiles local, ImportService imports, DatasetStore datasets, EventStore events, Form owner)
+    public Bridge(AppPaths paths, string user, bool dev, LocalFiles local, ImportService imports, JobService jobs, DatasetStore datasets, EventStore events, Form owner)
     {
         _paths = paths;
         _user = user;
         _dev = dev;
         _local = local;
         _imports = imports;
+        _jobs = jobs;
         _datasets = datasets;
         _events = events;
         _owner = owner;
         _imports.Progress += evt => Post(new JsonObject { ["event"] = "import.progress", ["data"] = evt });
+        _jobs.Progress += evt => Post(new JsonObject { ["event"] = "job.progress", ["data"] = evt });
     }
 
     public void Attach(CoreWebView2 core)
@@ -137,6 +140,14 @@ public sealed class Bridge
                 var alignment = p["alignment"] ?? throw new ArgumentException("alignment がありません");
                 return await Task.Run(() => _datasets.UpdateAlignment(folder, alignment, _user));
             }
+            case "jobKinds":
+                return _jobs.ListKinds();
+            case "jobList":
+                return _jobs.ListActive();
+            case "jobStart":
+                return await Task.Run(() => _jobs.Start(Req(p, "kind"), Req(p, "folder"), p["params"] as JsonObject));
+            case "jobAbort":
+                return _jobs.Abort(Req(p, "jobId"));
             case "eventsAppend":
             {
                 var evt = p["event"]?.DeepClone() as JsonObject ?? throw new ArgumentException("event がありません");
@@ -165,6 +176,7 @@ public sealed class Bridge
                 return true;
             case "restartApp":
                 if (_imports.AnyActive) throw new InvalidOperationException("取込中は再起動できません。取込が終わってから操作してください。");
+                if (_jobs.AnyActive) throw new InvalidOperationException("処理の実行中は再起動できません。処理が終わってから操作してください。");
                 Program.RestartRequested = true;
                 _owner.BeginInvoke(_owner.Close);
                 return true;

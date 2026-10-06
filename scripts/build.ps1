@@ -129,7 +129,7 @@ if ($convStale) {
     uv sync --frozen 2>$null; if ($LASTEXITCODE -ne 0) { uv sync }
     uv run pyinstaller --noconfirm --clean --onedir --console --name converter `
       --distpath (Join-Path $repo "build\converter-dist") --workpath (Join-Path $repo "build\converter-work") `
-      --specpath (Join-Path $repo "build") --collect-all pye57 --paths src pyi_entry.py
+      --specpath (Join-Path $repo "build") --collect-all pye57 --collect-submodules kasane_converter.jobs --paths src pyi_entry.py
     if ($LASTEXITCODE -ne 0) { throw "変換エンジンのビルドに失敗" }
   } finally {
     Pop-Location

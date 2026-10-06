@@ -219,7 +219,7 @@ try {
   const m1 = await page.evaluate(() => {
     const l = window.__kasane.app.measure.list;
     const m = l[l.length - 1];
-    return { n: l.length, d: m.distance, axis: m.segments[0].axis, b: m.b.toArray(), src: m.sources, panel: document.getElementById("measures").innerText };
+    return { n: l.length, d: m.distance, axis: m.segments[0].axis, b: m.b.toArray(), src: m.sources, panel: document.getElementById("tab-measures").innerText };
   });
   // 軸に吸着した区間は、2 点目をクリック点から軸へ射影した点で測る
   const end = m1.axis ? m1.b : a2.point;
@@ -297,12 +297,13 @@ try {
   await clickAt(mp[0].fx, mp[0].fy);
   await page.waitForFunction(() => !!window.__kasane.app.selection);
   const props = await page.locator("#props").innerText();
-  assert(props.includes("GlobalId") && props.includes("IFC クラス"), "要素の属性（GlobalId・クラス・Pset）を表示");
+  assert(props.includes("GlobalId") && props.includes("IFC クラス"), `要素の属性（GlobalId・クラス・Pset）を表示 ${props.includes("GlobalId") ? "" : JSON.stringify(props.slice(0, 200))}`);
   results.props = props.split("\n").slice(0, 8).join(" | ");
 
   // ======== 切断ボックス・断面 ========
   await page.click('#btn-clip');
-  await page.click('[data-clip="box"]');
+  await page.click('#chk-clip-box');
+  await page.keyboard.press("Escape");
   await page.evaluate(() => {
     const a = window.__kasane.app;
     a.clipping.boxAround(a.lastPick.point, 1.5);
@@ -318,11 +319,16 @@ try {
   // 箱の外（画面の隅）をクリックしても何も拾わない
   await clickAt(0.03, 0.03);
   const outside = await lastPick();
-  assert(clip.planes === 6 && clip.pcClip && outside === null, "切断ボックス（6 面、点群・モデル共通、外側は拾わない）");
+  assert(clip.planes === 6 && clip.pcClip && outside === null, `切断ボックス（6 面、点群・モデル共通、外側は拾わない） ${JSON.stringify({ ...clip, outside })}`);
   await page.screenshot({ path: join(shots, "e2e-clipbox.png") });
+  // 水平断面だけにする（ボックスは切る）
+  await page.evaluate(() => window.__kasane.app.setClipBox(false));
   await page.click('#btn-clip');
-  await page.click('[data-clip="section"]');
-  await page.evaluate(() => window.__kasane.app.clipping.setSection({ axis: "z", thickness: 0.3 }));
+  await page.click('[data-add-section="z"]');
+  await page.evaluate(() => {
+    const c = window.__kasane.app.clipping;
+    c.updateSection(c.sections[c.sections.length - 1].id, { thickness: 0.3 });
+  });
   const sec = await page.evaluate(() => window.__kasane.app.viewer.renderer.clippingPlanes.length);
   await page.click('#btn-view');
   await page.click('[data-view="top"]');
@@ -330,7 +336,7 @@ try {
   await page.screenshot({ path: join(shots, "e2e-section.png") });
   assert(sec === 2, "水平断面（厚み 30 cm の薄切り）");
   await page.click('#btn-clip');
-  await page.click('[data-clip="none"]');
+  await page.click('#btn-clip-off');
   await idle(500);
 
   // ======== 指摘の登録・再現 ========
