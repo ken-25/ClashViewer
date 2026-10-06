@@ -2,7 +2,7 @@
 // 新しいツール（搬入検討・干渉チェックなど）は同じ形の定義を別のファイルに書き、main.ts で読み込む。
 
 import { DEFAULT_TOOL, registerTool } from "../tools/toolRegistry";
-import { renderAlignPanel, renderIssueToolPanel, renderMeasurePanel, renderOriginPanel, renderPlanePanel } from "../ui/viewPanels";
+import { renderAlignPanel, renderIssueToolPanel, renderMeasurePanel, renderOriginPanel, renderPlanePanel } from "../ui/toolPanels";
 
 /** スナップを使うツールの案内に添えるキー */
 const SNAP_KEYS = "Tab 候補切替・Alt フリー";
@@ -25,7 +25,7 @@ registerTool({
   capturesDblClick: true,
   hint: (app) => {
     const m = app.measure;
-    const lock = app.axisLock ? `（${app.axisLock.toUpperCase()} 方向に固定）` : "";
+    const lock = app.measureMode.axisLock ? `（${app.measureMode.axisLock.toUpperCase()} 方向に固定）` : "";
     if (m.kind === "distance") {
       const step = m.hasPending ? `2点目をクリック${lock}` : "1点目をクリック";
       return `距離: ${step}　${SNAP_KEYS}・X/Y/Z 軸固定・Esc ${m.hasPending ? "キャンセル" : "終了"}`;
@@ -35,41 +35,35 @@ registerTool({
   },
   snap: () => ({ models: true, cloud: true }),
   onExit: (app) => app.measure.cancel(),
-  preClick: (app, e) => app.finishPolylineAtLastPoint(e),
+  preClick: (app, e) => app.measureMode.finishPolylineAtLastPoint(e),
   onClick: (app, p, _e, info) => {
-    if (p) app.addMeasurePoint(p, info.shift, info.snapLabel);
+    if (p) app.measureMode.addPoint(p, info.shift, info.snapLabel);
   },
   onKey: (app, e) => {
     const measuring = app.measure.hasPending;
     const key = e.key.toLowerCase();
     if (e.key === "Escape" && measuring) {
       // 距離は 1 点目を取り消し、折れ線はそこまでで確定する（ツールはそのまま。もう一度でツールを終える）
-      if (app.measure.kind === "polyline") app.finishMeasure();
-      else {
-        app.measure.cancel();
-        app.updateToolHint();
-        app.snap.refresh();
-      }
+      if (app.measure.kind === "polyline") app.measureMode.finish();
+      else app.measureMode.cancel();
       return true;
     }
     if (e.key === "Enter" && measuring) {
       e.preventDefault();
-      app.finishMeasure();
+      app.measureMode.finish();
       return true;
     }
     if (e.key === "Backspace" && measuring) {
       e.preventDefault();
-      app.measure.undo();
-      app.updateToolHint();
-      app.snap.refresh();
+      app.measureMode.undo();
       return true;
     }
     if (e.key === "Shift") {
-      app.setShiftHeld(true);
+      app.measureMode.setShiftHeld(true);
       return true;
     }
     if (plain(e) && !e.shiftKey && (key === "x" || key === "y" || key === "z")) {
-      app.toggleAxisLock(key);
+      app.measureMode.toggleAxisLock(key);
       return true;
     }
     return false;
@@ -82,14 +76,14 @@ registerTool({
   title: "UCS（ユーザー座標系）",
   toolbar: { label: "UCS", tooltip: "ユーザー座標系（UCS）を決める。1点目=原点、2点目=X軸の向き", order: 20 },
   hint: (app) =>
-    app.originStep === 0
+    app.ucs.step === 0
       ? `UCS: 原点にする点をクリック　${SNAP_KEYS}・Esc 終了`
       : `UCS: X 軸の向きにする点をクリック（Esc で向きは変えずに終了）　${SNAP_KEYS}`,
   snap: () => ({ models: true, cloud: true }),
-  onEnter: (app) => (app.originStep = 0),
-  onExit: (app) => (app.originStep = 0),
+  onEnter: (app) => (app.ucs.step = 0),
+  onExit: (app) => (app.ucs.step = 0),
   onClick: (app, p) => {
-    if (p) app.addOriginPoint(p);
+    if (p) app.ucs.addPoint(p);
   },
   renderPanel: renderOriginPanel,
 });
@@ -112,35 +106,35 @@ registerTool({
   exitLabel: "キャンセル",
   hint: () => `3点合わせ: 右のパネルの手順に従ってください　${SNAP_KEYS}・Esc キャンセル`,
   snap: (app) => {
-    const needModel = app.align.model.length <= app.align.cloud.length;
+    const needModel = app.align.needsModel;
     return { models: needModel, cloud: !needModel };
   },
   // 途中の対応点・仮の配置は、終わるとき（保存・キャンセル・Esc・ほかのツール）に捨てる
-  onExit: (app) => app.resetAlign(),
+  onExit: (app) => app.align.reset(),
   onClick: (app, p) => {
-    if (p) app.addAlignPick(p);
+    if (p) app.align.addPick(p);
   },
   renderPanel: renderAlignPanel,
 });
 
-// ツールバーには出さず、切断メニューの「面に合わせて断面を追加」から始める（app.startPlaneTool）
+// ツールバーには出さず、切断メニューの「面に合わせて断面を追加」から始める（app.section.startPlaneTool）
 registerTool({
   id: "plane",
   title: "面に合わせて断面を追加",
   exitLabel: "キャンセル",
-  hint: (app) => `${app.planeMethod === "face" ? "断面（面に合わせる）" : "断面（3点）"}: ${app.planeStepHint()}`,
+  hint: (app) => `${app.section.method === "face" ? "断面（面に合わせる）" : "断面（3点）"}: ${app.section.stepHint()}`,
   // 3点指定は角・端に吸着させる（面からのときは面の法線が要るのでスナップしない）
-  snap: (app) => (app.planeMethod === "points" ? { models: true, cloud: true } : null),
-  onEnter: (app) => app.resetPlaneTool(),
-  onExit: (app) => app.resetPlaneTool(),
+  snap: (app) => (app.section.method === "points" ? { models: true, cloud: true } : null),
+  onEnter: (app) => app.section.resetTool(),
+  onExit: (app) => app.section.resetTool(),
   onClick: (app, p, e) => {
-    if (p) app.planeClick(p, e);
-    else app.setHint(`断面: 何も無い所です。${app.planeStepHint()}`);
+    if (p) app.section.click(p, e);
+    else app.setHint(`断面: 何も無い所です。${app.section.stepHint()}`);
   },
   onKey: (app, e) => {
-    if (e.key === "Backspace" && app.planePts.length) {
+    if (e.key === "Backspace" && app.section.points.length) {
       e.preventDefault();
-      app.undoPlanePoint();
+      app.section.undoPoint();
       return true;
     }
     return false;

@@ -1,8 +1,10 @@
 import type { App } from "../app";
 import { sceneToWorld } from "../data/dataset";
 import { dataUrl, writeFile } from "../host";
+import { captureView, restoreView } from "../features/viewState";
 import { newIssueId, STATUSES, type Issue } from "../issues/issues";
 import { $, fmtDate, h, mount, showMessage } from "./dom";
+import { activateLeftTab } from "./panelHost";
 
 /**
  * 「指摘」タブ: 一覧・絞り込みと、一覧に重ねて出す詳細（状態・担当・コメント）・視点の再現。
@@ -11,20 +13,24 @@ import { $, fmtDate, h, mount, showMessage } from "./dom";
 export class IssuePanel {
   filter = { status: "", assignee: "", scope: "site" as "site" | "version" | "all" };
 
-  constructor(private readonly app: App) {
-    app.on("issues", () => this.render());
-    app.on("dataset", () => this.render());
+  /** el は左タブ「指摘」のパネル。描き直し（issues・dataset の通知）は左タブの登録口から呼ぶ */
+  constructor(private readonly app: App, private readonly el: HTMLElement) {
     app.on("issue:new", () => void this.create());
     app.on("issue:open", () => {
-      document.querySelector<HTMLButtonElement>('[data-tab="issues"]')?.click();
-      void this.open(app.selectedIssue!);
+      activateLeftTab("issues");
+      void this.open(app.issues.selected!);
     });
+  }
+
+  /** タブの件数: このプロジェクトの未対応・対応中 */
+  static openCount(app: App): string {
+    return String(app.issues.forCurrentSite().filter((i) => i.status === "未対応" || i.status === "対応中").length || "");
   }
 
   private list(): Issue[] {
     const { app, filter } = this;
     const m = app.current;
-    return [...app.issues.values()]
+    return [...app.issues.all.values()]
       .filter((i) => filter.scope === "all" || !m || (filter.scope === "site" ? i.site === m.site : i.dataset === m.folder))
       .filter((i) => !filter.status || i.status === filter.status)
       .filter((i) => !filter.assignee || i.assignee === filter.assignee)
@@ -39,8 +45,7 @@ export class IssuePanel {
 
   render() {
     const { app } = this;
-    $("#issue-count").textContent = String(app.issuesForCurrentSite().filter((i) => i.status === "未対応" || i.status === "対応中").length || "");
-    const sel = app.selectedIssue ? app.issues.get(app.selectedIssue) : null;
+    const sel = app.issues.selected ? app.issues.all.get(app.issues.selected) : null;
     // 詳細は一覧の上に重ねて出す（一覧と縦に積むと、件数が多いとき詳細が見えなくなる）
     if (sel) this.renderDetailView(sel);
     else this.renderList();
@@ -48,7 +53,7 @@ export class IssuePanel {
 
   /** 詳細から一覧に戻る（スクロール位置も戻す） */
   back() {
-    this.app.selectedIssue = null;
+    this.app.issues.selected = null;
     this.render();
     const scroller = document.getElementById("left");
     if (scroller) scroller.scrollTop = this.listScroll;
@@ -64,7 +69,7 @@ export class IssuePanel {
     };
     const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#tab-issues [data-focus]")?.dataset.focus;
     mount(
-      $("#tab-issues"),
+      this.el,
       h("div", { class: "row issue-nav" },
         h("button", { "data-focus": "back", title: "絞り込んだ一覧に戻る", onclick: () => this.back() }, "‹ 一覧に戻る"),
         h("span", { class: "grow" }),
@@ -81,7 +86,7 @@ export class IssuePanel {
     const { app, filter } = this;
     const list = this.list();
     mount(
-      $("#tab-issues"),
+      this.el,
       h("div", { class: "row" }, h("button", { class: "primary", disabled: !app.current, onclick: () => app.setTool("issue") }, "指摘を登録"), h("span", { class: "small muted" }, "画面上の位置をクリックして登録")),
       h("div", { class: "row small" }, h("label", null, "状態"), h("select", { class: "grow", onchange: (e: Event) => { filter.status = (e.target as HTMLSelectElement).value; this.render(); } },
         h("option", { value: "" }, "すべて"), STATUSES.map((s) => h("option", { value: s, selected: filter.status === s }, s)))),
@@ -117,16 +122,16 @@ export class IssuePanel {
       i.comment ? h("p", { style: "white-space:pre-wrap" }, i.comment) : null,
       i.screenshots.map((s) => h("img", { src: dataUrl(s), alt: `${i.title} のスクリーンショット`, loading: "lazy" })),
       h("div", { class: "row" },
-        h("button", { title: "登録したときの視点・切断・表示の状態に戻す", onclick: () => app.restoreView(i.view) }, "登録時の視点へ移動"),
+        h("button", { title: "登録したときの視点・切断・表示の状態に戻す", onclick: () => restoreView(app, i.view) }, "登録時の視点へ移動"),
         otherVersion ? h("button", { onclick: async () => {
           const ds = app.datasets.find((d) => d.folder === i.dataset);
-          if (ds) { await app.openDataset(ds); await app.restoreView(i.view); }
+          if (ds) { await app.openDataset(ds); await restoreView(app, i.view); }
           else await showMessage("開けません", "登録した版が見つかりません（削除された可能性があります）。");
         } }, "登録した版で開く") : null,
       ),
-      h("div", { class: "row small" }, h("label", null, "状態"), h("select", { class: "grow", onchange: (e: Event) => app.appendEvent({ type: "issue.update", id: i.id, status: (e.target as HTMLSelectElement).value }) },
+      h("div", { class: "row small" }, h("label", null, "状態"), h("select", { class: "grow", onchange: (e: Event) => app.issues.append({ type: "issue.update", id: i.id, status: (e.target as HTMLSelectElement).value }) },
         STATUSES.map((s) => h("option", { value: s, selected: i.status === s }, s)))),
-      h("div", { class: "row small" }, h("label", null, "担当"), h("select", { class: "grow", onchange: (e: Event) => app.appendEvent({ type: "issue.update", id: i.id, assignee: (e.target as HTMLSelectElement).value }) },
+      h("div", { class: "row small" }, h("label", null, "担当"), h("select", { class: "grow", onchange: (e: Event) => app.issues.append({ type: "issue.update", id: i.id, assignee: (e.target as HTMLSelectElement).value }) },
         h("option", { value: "" }, "なし"), app.ctx.members.map((m) => h("option", { value: m.id, selected: i.assignee === m.id }, m.name)))),
       h("h3", null, `コメント（${i.comments.length}）`),
       i.comments.map((c) => h("div", { class: "small" }, h("b", null, app.memberName(c.by)), ` ${fmtDate(c.at)}`, h("div", { style: "white-space:pre-wrap" }, c.text))),
@@ -135,12 +140,12 @@ export class IssuePanel {
         h("button", { onclick: async () => {
           if (!comment.trim()) return;
           this.drafts.delete(i.id);
-          await app.appendEvent({ type: "issue.comment", id: i.id, text: comment.trim() });
+          await app.issues.append({ type: "issue.comment", id: i.id, text: comment.trim() });
         } }, "コメントを追加"),
         h("button", { onclick: async () => {
           const shot = await this.saveScreenshot(i.id);
           this.drafts.delete(i.id);
-          await app.appendEvent({ type: "issue.comment", id: i.id, text: comment.trim() || "画面を追加", screenshot: shot });
+          await app.issues.append({ type: "issue.comment", id: i.id, text: comment.trim() || "画面を追加", screenshot: shot });
         } }, "今の画面を添付"),
       ),
       h("details", null, h("summary", { class: "small" }, "履歴"), i.history.map((x) => h("div", { class: "small muted" }, `${fmtDate(x.at)} ${app.memberName(x.by)} ${x.text}`))),
@@ -151,13 +156,13 @@ export class IssuePanel {
     const app = this.app;
     const scroller = document.getElementById("left");
     // 一覧から開くときだけ位置を覚える（詳細どうしの移動では覚え直さない）
-    if (!app.selectedIssue && scroller) this.listScroll = scroller.scrollTop;
-    app.selectedIssue = id;
+    if (!app.issues.selected && scroller) this.listScroll = scroller.scrollTop;
+    app.issues.selected = id;
     this.lastViewed = id;
     this.render();
     if (scroller) scroller.scrollTop = 0;
-    const i = app.issues.get(id);
-    if (i && app.current && i.site === app.current.site) await app.restoreView(i.view);
+    const i = app.issues.all.get(id);
+    if (i && app.current && i.site === app.current.site) await restoreView(app, i.view);
   }
 
   private async saveScreenshot(id: string): Promise<string> {
@@ -175,7 +180,7 @@ export class IssuePanel {
     if (!m || !p) return;
     app.setTool("select");
     const id = newIssueId(app.ctx.user);
-    const view = app.captureView();
+    const view = captureView(app);
     const blob = await app.viewer.screenshot();
     const url = URL.createObjectURL(blob);
     const dlg = $("#dlg-issue") as HTMLDialogElement;
@@ -205,7 +210,7 @@ export class IssuePanel {
     if (!ok) return;
     const rel = `issues/${id}/${Date.now()}.png`;
     await writeFile(rel, await blob.arrayBuffer());
-    await app.appendEvent({
+    await app.issues.append({
       type: "issue.create",
       id,
       site: m.site,
@@ -221,7 +226,7 @@ export class IssuePanel {
       view,
       screenshot: rel,
     });
-    app.selectedIssue = id;
+    app.issues.selected = id;
     this.lastViewed = id;
     this.render();
   }

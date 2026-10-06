@@ -131,7 +131,7 @@ try {
         const a = window.__kasane.app;
         const r = a.viewer.canvas.getBoundingClientRect();
         const any = await a.picker.pick(r.left + r.width / 2, r.top + r.height / 2, { models: true, cloud: true });
-        return { tool: a.tool, align: [a.align.model.length, a.align.cloud.length], any: any && [any.source, ...any.point.toArray().map((x) => +x.toFixed(2))], cam: a.viewer.camera.position.toArray().map((x) => +x.toFixed(2)) };
+        return { tool: a.tool, align: [a.align.picks.model.length, a.align.picks.cloud.length], any: any && [any.source, ...any.point.toArray().map((x) => +x.toFixed(2))], cam: a.viewer.camera.position.toArray().map((x) => +x.toFixed(2)) };
       });
       if (i === 0) console.log(`    （${want} を拾えず）`, JSON.stringify(dbg));
       await idle(800);
@@ -169,7 +169,7 @@ try {
   }
   const align = await page.evaluate(() => {
     const a = window.__kasane.app;
-    return { n: [a.align.model.length, a.align.cloud.length], preview: a.alignPreview?.toArray() ?? null, panel: document.getElementById("tool-opts").innerText };
+    return { n: [a.align.picks.model.length, a.align.picks.cloud.length], preview: a.align.preview?.toArray() ?? null, panel: document.getElementById("tool-opts").innerText };
   });
   assert(align.n[0] === 3 && align.n[1] === 3 && align.preview, "3 組の対応点から合わせ行列を計算");
   const M = align.preview; // 列優先
@@ -211,7 +211,7 @@ try {
   await idle(1500);
   const mp = await findModelHits(3);
   await tool("measure");
-  await page.evaluate(() => window.__kasane.app.setMeasureKind("distance"));
+  await page.evaluate(() => window.__kasane.app.measureMode.setKind("distance"));
   await clickAt(mp[0].fx, mp[0].fy);
   const a1 = await lastPick();
   await clickAt(mp[1].fx, mp[1].fy);
@@ -273,7 +273,7 @@ try {
   const nonAxis = big.filter((_, i) => i !== { x: 0, y: 1, z: 2 }[om.axis]);
   assert(om.axis && Math.abs(Math.max(...big) - om.d) < 1e-9 && nonAxis.every((v) => v < 1e-9), `直交計測 ${om.axis.toUpperCase()} 方向 ${om.d.toFixed(3)} m（他の成分 0）`);
   // 折れ線: Z 固定の区間＋自由な区間、Enter で確定（区間ごとの長さと合計）
-  await page.evaluate(() => window.__kasane.app.setMeasureKind("polyline"));
+  await page.evaluate(() => window.__kasane.app.measureMode.setKind("polyline"));
   await clickAt(mp[0].fx, mp[0].fy);
   await page.keyboard.press("z");
   await clickAt(mp[1].fx, mp[1].fy);
@@ -285,7 +285,7 @@ try {
     return { kind: m.kind, n: m.segments.length, axis0: m.segments[0].axis, c0: m.segments[0].components.toArray(), sum: m.segments.reduce((s, x) => s + x.length, 0), total: m.total };
   });
   assert(pl.kind === "polyline" && pl.n === 2 && pl.axis0 === "z" && Math.abs(pl.c0[0]) < 1e-9 && Math.abs(pl.c0[1]) < 1e-9 && Math.abs(pl.sum - pl.total) < 1e-9, `折れ線 2 区間（1 区間目 Z）計 ${pl.total.toFixed(3)} m`);
-  await page.evaluate(() => window.__kasane.app.setMeasureKind("distance"));
+  await page.evaluate(() => window.__kasane.app.measureMode.setKind("distance"));
   // 局所座標の表示（原点で 0）
   const coordText = await page.locator("#st-coord").innerText();
   results.ortho = om;
@@ -322,7 +322,7 @@ try {
   assert(clip.planes === 6 && clip.pcClip && outside === null, `切断ボックス（6 面、点群・モデル共通、外側は拾わない） ${JSON.stringify({ ...clip, outside })}`);
   await page.screenshot({ path: join(shots, "e2e-clipbox.png") });
   // 水平断面だけにする（ボックスは切る）
-  await page.evaluate(() => window.__kasane.app.setClipBox(false));
+  await page.evaluate(() => window.__kasane.app.section.setClipBox(false));
   await page.click('#btn-clip');
   await page.click('[data-add-section="z"]');
   await page.evaluate(() => {
@@ -349,10 +349,10 @@ try {
   await page.fill('#dlg-issue input[type="text"]', "E2E: 柱と配管の干渉");
   await page.fill("#dlg-issue textarea", "E2E テストで登録");
   await page.click("#dlg-issue button.primary");
-  await page.waitForFunction(() => window.__kasane.app.issues.size > 0);
+  await page.waitForFunction(() => window.__kasane.app.issues.all.size > 0);
   const issue = await page.evaluate(() => {
     const a = window.__kasane.app;
-    const i = [...a.issues.values()].at(-1);
+    const i = [...a.issues.all.values()].at(-1);
     return { id: i.id, cam: i.view.camera, shot: i.screenshots[0], status: i.status, pins: document.querySelectorAll(".issue-pin").length };
   });
   assert(existsSync(join(share, issue.shot)) && existsSync(join(share, "events", "e2e-sato.jsonl")), "指摘を登録（events/e2e-sato.jsonl とスクリーンショット）");
@@ -372,7 +372,7 @@ try {
   await page.click('[data-tab="diff"]');
   const diffText = await page.locator("#tab-diff").innerText();
   await page.click('#tab-diff input[type="checkbox"]');
-  await page.waitForFunction(() => window.__kasane.app.diffShown && [...window.__kasane.app.models.models.values()].some((m) => m.role === "previous"), null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__kasane.app.diff.shown && [...window.__kasane.app.models.models.values()].some((m) => m.role === "previous"), null, { timeout: 60000 });
   await idle(1500);
   // 変更された柱へ寄る
   await page.click("#tab-diff details[open] .diff-list div");
@@ -390,7 +390,7 @@ try {
 const app2 = await launch({ user: "e2e-tanaka" });
 page = app2.page;
 try {
-  await page.waitForFunction(() => window.__kasane.app.issues.size > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.__kasane.app.issues.all.size > 0, null, { timeout: 30000 });
   await page.evaluate(async (f) => {
     const a = window.__kasane.app;
     await a.refreshDatasets();
@@ -399,14 +399,14 @@ try {
   await page.waitForTimeout(2000);
   const seen = await page.evaluate(() => {
     const a = window.__kasane.app;
-    const i = [...a.issues.values()].at(-1);
+    const i = [...a.issues.all.values()].at(-1);
     return { id: i.id, by: i.createdBy, pinsOther: document.querySelectorAll(".issue-pin.other-version").length, version: a.current.version };
   });
   assert(seen.by === "e2e-sato" && seen.pinsOther >= 1, `別の人の指摘が見える・前の版（第${seen.version}版）にも位置で重ねて表示`);
   await page.click('[data-tab="issues"]');
   await page.click(".issue-item");
   await page.selectOption("#tab-issues .issue-detail select >> nth=0", "対応中");
-  await page.waitForFunction(() => [...window.__kasane.app.issues.values()].at(-1).status === "対応中");
+  await page.waitForFunction(() => [...window.__kasane.app.issues.all.values()].at(-1).status === "対応中");
   const files = readdirSync(join(share, "events"));
   assert(files.includes("e2e-tanaka.jsonl") && files.includes("e2e-sato.jsonl"), "状態変更は自分のファイル（events/e2e-tanaka.jsonl）にだけ追記");
   await page.screenshot({ path: join(shots, "e2e-issue-other.png") });

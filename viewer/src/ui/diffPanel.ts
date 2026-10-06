@@ -1,14 +1,13 @@
 import type { App } from "../app";
 import type { DiffItem } from "../data/diff";
-import { $, fmtDate, h, mount } from "./dom";
+import { fmtDate, h, mount } from "./dom";
 
 const KIND_LABEL: Record<string, string> = { position: "位置", size: "寸法", attributes: "属性", model: "ファイル" };
 
 /** 「差分」タブ: 前の版との差分（件数・一覧・色分け・どのファイルから作った版か） */
-export function renderDiff(app: App) {
-  const el = $("#tab-diff");
+export function renderDiff(app: App, el: HTMLElement) {
   const m = app.current;
-  const d = app.diff;
+  const d = app.diff.data;
   if (!m) {
     mount(el, h("p", { class: "muted" }, app.isLoadingView ? "" : "プロジェクトを開いてください。"));
     return;
@@ -34,7 +33,7 @@ export function renderDiff(app: App) {
   mount(
     el,
     h("h2", null, `第${pv.base.version}版 → 第${pv.current.version}版`),
-    h("label", { class: "row" }, h("input", { type: "checkbox", checked: app.diffShown, onchange: (e: Event) => app.showDiff((e.target as HTMLInputElement).checked) }), "色分けして表示（追加=緑・変更=黄・削除=赤の半透明）"),
+    h("label", { class: "row" }, h("input", { type: "checkbox", checked: app.diff.shown, onchange: (e: Event) => app.diff.show((e.target as HTMLInputElement).checked) }), "色分けして表示（追加=緑・変更=黄・削除=赤の半透明）"),
     h("h3", null, "モデル"),
     h(
       "div",

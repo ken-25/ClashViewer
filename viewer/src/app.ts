@@ -1,21 +1,24 @@
 import * as FRAGS from "@thatopen/fragments";
 import * as THREE from "three";
-import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { fetchBytes, fetchJson, host, onJobProgress, type HostContext, type JobProgress } from "./host";
+import { fetchBytes, host, onJobProgress, type HostContext, type JobProgress } from "./host";
 import { DEFAULT_TOOL, getTool, type ToolId } from "./tools/toolRegistry";
 import { fileRel, groupBySite, ifcToScene, migrateManifests, sceneToWorld, worldToScene, type Manifest } from "./data/dataset";
-import type { DatasetDiff } from "./data/diff";
-import { foldIssues, type Issue, type IssueEvent, type IssueView } from "./issues/issues";
+import { AlignMode } from "./features/alignMode";
+import { DiffView } from "./features/diffView";
+import type { AppFeature } from "./features/feature";
+import { IssueStore } from "./features/issueStore";
+import { MeasureMode, sourceName } from "./features/measureMode";
+import { SectionMode } from "./features/sectionMode";
+import { UcsMode } from "./features/ucsMode";
 import { ModelManager, type LoadedModel } from "./model/models";
 import { ColorMode } from "./pointcloud/material";
 import { PotreePointCloud } from "./pointcloud/potree";
 import { candidateToPick, Picker, type Pick } from "./scene/picker";
-import { SNAP_LABEL, type SnapCandidate } from "./scene/snap";
+import { SNAP_LABEL } from "./scene/snap";
 import { Viewer3D } from "./scene/viewer3d";
 import { ClipBoxEditor } from "./tools/clipBoxEdit";
 import { Clipping } from "./tools/clipping";
-import { fitCloudPlane, PickMarks, planeFrom3 } from "./tools/planePick";
-import { LocalFrame, MeasureTool, type Axis, type MeasureKind } from "./tools/measure";
+import { LocalFrame, MeasureTool } from "./tools/measure";
 import { SnapCursor } from "./tools/snapCursor";
 import { $ } from "./ui/dom";
 
@@ -25,6 +28,7 @@ export type Tool = ToolId;
 /**
  * App が出す通知の名前。購読は app.on(名前, cb)。足すときはここに追記する（打ち間違いを型で止める）。
  * jobs: 処理（ジョブ）の進捗・完了（app.jobs が変わった）
+ * projection: 平行投影・透視が切り替わった
  */
 export type AppTopic =
   | "datasets"
@@ -41,7 +45,8 @@ export type AppTopic =
   | "issues"
   | "issue:new"
   | "issue:open"
-  | "jobs";
+  | "jobs"
+  | "projection";
 
 /** 実行中・直近に終わった処理（ジョブ）の状態 */
 export interface JobState {
@@ -52,21 +57,6 @@ export interface JobState {
   /** 最後の段階・進捗（stage / progress の通知） */
   last: JobProgress | null;
   message?: string;
-}
-
-export type PlaneMethod = "face" | "points";
-
-/** カーソルが軸の線からこの距離（px）以内なら、その軸に吸着する */
-const AXIS_TRACK_PX = 10;
-/** 断面の向きを WCS の軸へ丸める角度。モデルの法線は圧縮のぶれ程度、点群・3点指定はクリックのぶれを見込む */
-const MODEL_NORMAL_TOL_DEG = 0.11;
-const PICKED_NORMAL_TOL_DEG = 0.5;
-
-export interface AlignPick {
-  model: THREE.Vector3[]; // IFC 座標
-  cloud: THREE.Vector3[]; // 世界座標
-  modelScene: THREE.Vector3[];
-  cloudScene: THREE.Vector3[];
 }
 
 /** 位置の目印（画面端の矢印・小地図）に出すもの。box はシーン座標（原点は大きさ 0 の箱） */
@@ -87,11 +77,6 @@ export interface NavSettings {
 }
 
 const SELECT_COLOR = new THREE.Color(0x3399ff);
-const DIFF_COLORS = { added: new THREE.Color(0x3cc85a), changed: new THREE.Color(0xf2c01e), removed: new THREE.Color(0xe5534b) };
-
-function sourceName(p: Pick): string {
-  return p.source === "model" ? "モデル" : p.source === "cloud" ? "点群" : "軸上";
-}
 
 function loadNavSettings(): NavSettings {
   const def: NavSettings = { markers: true, origins: true, minimap: true };
@@ -104,7 +89,11 @@ function loadNavSettings(): NavSettings {
   return def;
 }
 
-/** 画面全体の状態と操作。各パネルはこれを参照して描く。 */
+/**
+ * 画面全体の状態と操作。各パネルはこれを参照して描く。
+ * App が持つのは共通の土台（版・点群・モデル・視点・切断・ツールの切替・選択・処理）だけ。
+ * 各機能の状態と操作は features/ のモジュールに置き、下の measureMode〜diff から使う。
+ */
 export class App {
   ctx!: HostContext;
   readonly viewer: Viewer3D;
@@ -114,40 +103,34 @@ export class App {
   readonly clipEditor: ClipBoxEditor;
   readonly frame: LocalFrame;
   readonly measure: MeasureTool;
+  readonly snap: SnapCursor;
   datasets: Manifest[] = [];
   current: Manifest | null = null;
   pc: PotreePointCloud | null = null;
   tool: Tool = DEFAULT_TOOL;
-  /** 計測の区間を固定する軸（X/Y/Z キーで固定、もう一度で解除）。null なら軸に近いときだけ吸着 */
-  axisLock: Axis | null = null;
-  /** Shift を押している間（最も大きい成分の軸に固定） */
-  shiftHeld = false;
-  readonly snap: SnapCursor;
   selection: { lm: LoadedModel; localId: number; data: any } | null = null;
   lastPick: Pick | null = null;
-  issues = new Map<string, Issue>();
-  private events: IssueEvent[] = [];
-  private eventOffsets: Record<string, number> | null = null;
-  private readonly issuePins = new THREE.Group();
-  selectedIssue: string | null = null;
-  diff: DatasetDiff | null = null;
-  diffShown = false;
-  align: AlignPick = { model: [], cloud: [], modelScene: [], cloudScene: [] };
-  alignPreview: THREE.Matrix4 | null = null;
   pointBudget = 3_000_000;
   nav: NavSettings = loadNavSettings();
   private listeners = new Map<AppTopic, Set<() => void>>();
   /** 処理（ジョブ）の状態。jobId → 状態。終わったものも画面を閉じるまで残す */
   readonly jobs = new Map<string, JobState>();
-  /** UCS ツールの手順（0: 原点 / 1: X 軸の向き） */
-  originStep = 0;
-  /** 断面の決め方。face: 面（モデルの面・点群の平らな所）を 1 クリック / points: 3点指定 */
-  planeMethod: PlaneMethod = "face";
-  /** パネルで選んだ決め方（自動で 3点指定に切り替わっても、次はこちらから始める） */
-  private planeMethodPref: PlaneMethod = "face";
-  /** 3点指定で選んだ点（シーン座標） */
-  planePts: THREE.Vector3[] = [];
-  private readonly planeMarks = new PickMarks();
+
+  // ---- 機能（状態と操作はそれぞれのモジュール） ----
+  /** 計測の操作（軸の固定・吸着・点の追加）。結果は measure */
+  readonly measureMode: MeasureMode;
+  /** UCS の設定手順と保存。座標系は frame */
+  readonly ucs: UcsMode;
+  /** 切断メニューの操作と、面に合わせた断面ツール */
+  readonly section: SectionMode;
+  /** 3点合わせ */
+  readonly align: AlignMode;
+  /** 指摘（イベントの読み書きとピン） */
+  readonly issues: IssueStore;
+  /** 前の版との差分 */
+  readonly diff: DiffView;
+  /** 版を開く・閉じるときに呼ぶ機能（登録順） */
+  private readonly features: AppFeature[];
 
   constructor() {
     this.viewer = new Viewer3D($("#view"));
@@ -163,10 +146,19 @@ export class App {
     this.measure.onChange = () => this.emit("measures");
     this.picker.axes = () => this.frame.axes();
     this.snap = new SnapCursor(this.viewer, this.picker);
+
+    this.measureMode = new MeasureMode(this);
+    this.ucs = new UcsMode(this);
+    this.section = new SectionMode(this);
+    this.align = new AlignMode(this);
+    this.issues = new IssueStore(this);
+    this.diff = new DiffView(this);
+    this.features = [this.measureMode, this.ucs, this.section, this.align, this.issues, this.diff];
+
     this.snap.options = () => this.snapOptions();
-    this.snap.augment = (list, x, y) => this.addAxisCandidate(list, x, y);
+    this.snap.augment = (list, x, y) => this.measureMode.addAxisCandidate(list, x, y);
     this.snap.onChange = (c) => {
-      if (this.tool === "measure") this.measure.setPreview(c?.point ?? null, c ? this.segmentAxis(c.point) : this.axisLock);
+      if (this.tool === "measure") this.measure.setPreview(c?.point ?? null, c ? this.measureMode.segmentAxis(c.point) : this.measureMode.axisLock);
       if (c) this.showCoord(candidateToPick(c));
     };
     this.viewer.controls.addEventListener("change", () => this.snap.cameraMoved());
@@ -178,9 +170,10 @@ export class App {
       this.clipEditor.refresh();
       this.emit("clip");
     };
-    this.viewer.overlay.add(this.planeMarks.object);
-    this.issuePins.name = "issues";
-    this.viewer.overlay.add(this.issuePins);
+    this.viewer.onProjectionChange((p) => {
+      localStorage.setItem("projection", p);
+      this.emit("projection");
+    });
     this.viewer.onBeforeRender(() => {
       if (!this.pc) return;
       this.pc.update(this.viewer.camera, this.viewer.size.height * this.viewer.renderer.getPixelRatio());
@@ -188,6 +181,7 @@ export class App {
     });
     const saved = Number(localStorage.getItem("pointBudget"));
     if (saved > 0) this.pointBudget = saved;
+    if (localStorage.getItem("projection") === "orthographic") this.viewer.setProjection("orthographic");
   }
 
   /** 通知を購読する。戻り値で購読をやめる */
@@ -278,6 +272,10 @@ export class App {
     return this.sites.get(site) ?? [];
   }
 
+  memberName(id: string): string {
+    return this.ctx.members.find((m) => m.id === id)?.name || id;
+  }
+
   /** データセットを開いている途中なら、その完了を待つ Promise */
   opening: Promise<void> | null = null;
 
@@ -329,19 +327,10 @@ export class App {
       const extent = this.sceneBox();
       this.clipping.extent = extent.clone();
       this.clipping.box.copy(extent);
-      this.frame.restore(JSON.parse(localStorage.getItem(`frame:${m.site}`) ?? "null"), origin);
       this.viewer.fit(extent);
       // 離れて見えない側（モデル・点群）は、画面端の目印と小地図で場所を示す
       this.setHint("");
-      this.diff = null;
-      if (m.diff) {
-        try {
-          this.diff = await fetchJson<DatasetDiff>(`datasets/${m.folder}/diff.json`);
-        } catch (e) {
-          console.warn(e);
-        }
-      }
-      this.renderIssuePins();
+      for (const f of this.features) await f.onOpen?.(m);
       localStorage.setItem("lastDataset", m.folder);
       this.emit("dataset");
     } finally {
@@ -352,9 +341,8 @@ export class App {
   }
 
   async closeDataset() {
-    this.measure.clear();
+    for (const f of this.features) f.onClose?.();
     this.selection = null;
-    this.diffShown = false;
     if (this.pc) {
       this.viewer.content.remove(this.pc.group);
       this.pc.dispose();
@@ -365,8 +353,6 @@ export class App {
     this.clipping.reset();
     this.current = null;
     $("#current-name").textContent = "プロジェクトを選んでください";
-    this.alignPreview = null;
-    this.align = { model: [], cloud: [], modelScene: [], cloudScene: [] };
     this.viewer.requestRender();
   }
 
@@ -449,6 +435,11 @@ export class App {
     this.emit("nav");
   }
 
+  /** 平行投影と透視を切り替える（P キー・3D 画面左上のボタン） */
+  toggleProjection() {
+    this.viewer.setProjection(this.viewer.projection === "orthographic" ? "perspective" : "orthographic");
+  }
+
   /** 点群とモデルが「明らかに合っていない」ほど離れていれば、その距離（m）。近ければ null */
   modelGap(pcBox = this.pc?.boxDisplay, modelBox = this.models.box()): number | null {
     if (!pcBox || pcBox.isEmpty() || modelBox.isEmpty()) return null;
@@ -497,119 +488,15 @@ export class App {
     this.emit("tool");
   }
 
-  /** 断面ツールに入るとき: パネルで選んだ決め方から始める */
-  resetPlaneTool() {
-    this.planeMethod = this.planeMethodPref;
-    this.planePts = [];
-    this.planeMarks.set([]);
-  }
-
   /** ツールの案内。今の手順で使うキーだけを出し、一覧は「?」にまとめる */
   updateToolHint() {
     this.setHint(getTool(this.tool).hint(this));
-  }
-
-  /** 計測の種類（距離・折れ線）を変える */
-  setMeasureKind(k: MeasureKind) {
-    this.measure.setKind(k);
-    this.updateToolHint();
-    this.snap.refresh();
-    this.emit("measures");
-  }
-
-  /** X/Y/Z キー・パネルのボタン。同じ軸をもう一度で解除 */
-  toggleAxisLock(a: Axis) {
-    this.axisLock = this.axisLock === a ? null : a;
-    this.updateToolHint();
-    this.snap.refresh();
-    this.emit("measures");
-  }
-
-  setShiftHeld(on: boolean) {
-    if (this.shiftHeld === on) return;
-    this.shiftHeld = on;
-    this.snap.refresh();
-  }
-
-  /**
-   * 最後の点 → target の区間の軸。優先順: X/Y/Z キーの固定 → Shift（最も大きい成分）→
-   * 軸への吸着（target を軸へ射影した点が画面上で AXIS_TRACK_PX 以内なら、その軸）→ なし。
-   * Alt・スナップ切のときは吸着しない。
-   */
-  segmentAxis(target: THREE.Vector3, shift = this.shiftHeld): Axis | null {
-    const a = this.measure.pendingPoint;
-    if (!a || this.tool !== "measure") return null;
-    if (this.axisLock) return this.axisLock;
-    if (shift) return this.measure.dominantAxis(a, target);
-    if (this.snap.isFree) return null;
-    const sa = this.picker.project(a);
-    const st = this.picker.project(target);
-    // 最後の点のすぐ近くでは向きが定まらないので吸着しない
-    if (Math.hypot(st.x - sa.x, st.y - sa.y) < 2 * AXIS_TRACK_PX) return null;
-    let best: Axis | null = null;
-    let bestD = AXIS_TRACK_PX;
-    for (const k of ["x", "y", "z"] as const) {
-      const b = this.measure.endPoint(a, target, k);
-      const sb = this.picker.project(b);
-      // 視線の向きに近い軸（画面上で縮んで見える軸）は、どこでも近く見えるので除く
-      if (Math.hypot(sb.x - sa.x, sb.y - sa.y) < AXIS_TRACK_PX) continue;
-      const d = Math.hypot(sb.x - st.x, sb.y - st.y);
-      if (d <= bestD) {
-        bestD = d;
-        best = k;
-      }
-    }
-    return best;
   }
 
   /** スナップの候補を探す対象（スナップを使わないツールは null） */
   private snapOptions(): { models: boolean; cloud: boolean } | null {
     if (!this.current) return null;
     return getTool(this.tool).snap?.(this) ?? null;
-  }
-
-  /**
-   * 計測の作図中、カーソルの下に何も無いときは最後の点を通る軸の線上の点を候補にする
-   * （空中でも軸に沿って測れるように）。固定した軸・Shift では常に、それ以外は軸の線の近くだけ。
-   */
-  private addAxisCandidate(list: SnapCandidate[], clientX: number, clientY: number): SnapCandidate[] {
-    const a = this.measure.pendingPoint;
-    if (!a || this.tool !== "measure") return list;
-    if (list.some((c) => c.kind === "free")) return list;
-    const forced = !!this.axisLock || this.shiftHeld;
-    if (!forced && this.snap.isFree) return list;
-    const ray = this.picker.rayAt(clientX, clientY);
-    const rect = this.viewer.canvas.getBoundingClientRect();
-    const cx = clientX - rect.left;
-    const cy = clientY - rect.top;
-    let best: SnapCandidate | null = null;
-    for (const k of this.axisLock ? [this.axisLock] : (["x", "y", "z"] as const)) {
-      const dir = this.frame.axisVector(k);
-      const L = 1e4;
-      const p = new THREE.Vector3();
-      ray.distanceSqToSegment(a.clone().addScaledVector(dir, -L), a.clone().addScaledVector(dir, L), undefined, p);
-      const s = this.picker.project(p);
-      const c: SnapCandidate = {
-        kind: "axis",
-        source: "axis",
-        point: p,
-        distance: this.viewer.camera.position.distanceTo(p),
-        sx: s.x,
-        sy: s.y,
-        screenDist: Math.hypot(s.x - cx, s.y - cy),
-        detail: k.toUpperCase(),
-      };
-      if (!best || c.screenDist < best.screenDist) best = c;
-    }
-    if (!best || (!forced && best.screenDist > AXIS_TRACK_PX)) return list;
-    return [...list, best];
-  }
-
-  /** 作図中の計測を確定する（折れ線の Enter・ダブルクリック・Esc） */
-  finishMeasure() {
-    this.measure.finish();
-    this.updateToolHint();
-    this.snap.refresh();
   }
 
   async handleClick(e: MouseEvent) {
@@ -631,177 +518,6 @@ export class App {
     await def.onClick?.(this, p, e, { snapLabel, shift });
   }
 
-  /** 計測ツールのクリック: 点を足す */
-  addMeasurePoint(p: Pick, shift: boolean, snapLabel: string | null) {
-    this.measure.add(p.point, sourceName(p), this.segmentAxis(p.point, shift), snapLabel);
-    this.updateToolHint();
-    // 続けて仮の線を出す（カーソルは動いていないので同じ候補を使う）
-    this.snap.refresh();
-  }
-
-  /** UCS ツールのクリック: 1 点目で原点、2 点目で X 軸の向き */
-  addOriginPoint(p: Pick) {
-    if (this.originStep === 0) {
-      this.frame.set(p.point);
-      this.originStep = 1;
-      this.updateToolHint();
-    } else {
-      this.frame.set(this.frame.origin, p.point);
-      this.saveFrame();
-      this.setTool(DEFAULT_TOOL);
-    }
-    this.saveFrame();
-    this.emit("measures");
-  }
-
-  /** 折れ線: 最後の点をもう一度クリック（ダブルクリック）で確定。確定したら true */
-  finishPolylineAtLastPoint(e: MouseEvent): boolean {
-    if (this.measure.kind !== "polyline" || this.measure.pointCount < 2) return false;
-    const last = this.picker.project(this.measure.pendingPoint!);
-    const rect = this.viewer.canvas.getBoundingClientRect();
-    if (Math.hypot(e.clientX - rect.left - last.x, e.clientY - rect.top - last.y) > 5) return false;
-    this.finishMeasure();
-    return true;
-  }
-
-  /** 切断ボックスのオン・オフ（3D 画面左上の「切断」メニュー） */
-  setClipBox(on: boolean) {
-    if (on && !this.clipping.active) this.prepareClipExtent();
-    this.clipping.setBoxOn(on);
-  }
-
-  /**
-   * 水平・垂直の断面を足す（3D 画面左上の「切断」メニュー）。今見ている所（注視点）を通す。
-   * 垂直は UCS を設定していれば UCS の X・Y 軸に直交、なければ WCS。
-   */
-  addAxisSection(axis: Axis) {
-    const m = this.current;
-    if (!m) return;
-    if (!this.clipping.active) this.prepareClipExtent();
-    const ext = this.clipping.extent;
-    const t = this.viewer.controls.target;
-    const point = ext.containsPoint(t) ? t.clone() : ext.getCenter(new THREE.Vector3());
-    const ucs = axis !== "z" && this.frame.isSet;
-    const dir = ucs ? this.frame.axisVector(axis) : new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
-    const base = ucs ? this.frame.toLocal(point)[axis] : point[axis] + m.origin[{ x: 0, y: 1, z: 2 }[axis]];
-    const label = axis === "z" ? "水平" : `垂直（${ucs ? "UCS " : ""}${axis.toUpperCase()}）`;
-    this.clipping.addAxisSection(point, dir, label, { space: ucs ? "UCS" : "WCS", axis, base });
-  }
-
-  /** 面に合わせた断面ツールを始める（切断の範囲を今見ている側に合わせてから） */
-  startPlaneTool() {
-    if (!this.current) return;
-    if (!this.clipping.active) this.prepareClipExtent();
-    this.setTool("plane");
-  }
-
-  /** 断面の決め方を変える（右のパネル）。次に断面ツールを始めたときもこの決め方 */
-  setPlaneMethod(m: PlaneMethod) {
-    this.planeMethodPref = m;
-    this.planeMethod = m;
-    this.planePts = [];
-    this.planeMarks.set([]);
-    this.updateToolHint();
-    this.snap.refresh();
-    this.emit("tool");
-  }
-
-  /** 3点指定の 1 点を戻す（Backspace） */
-  undoPlanePoint() {
-    if (!this.planePts.length) return;
-    this.planePts.pop();
-    this.planeMarks.set(this.planePts);
-    this.updateToolHint();
-    this.snap.refresh();
-    this.emit("tool");
-  }
-
-  /** 今の手順の案内（断面ツール） */
-  planeStepHint(): string {
-    if (this.planeMethod === "face") return "モデルの面か、点群の平らな所をクリック　Esc キャンセル";
-    return `${this.planePts.length + 1}点目をクリック　Tab 候補切替・Alt フリー${this.planePts.length ? "・Backspace 1点戻す" : ""}・Esc キャンセル`;
-  }
-
-  /**
-   * 断面ツールのクリック。
-   * - 面から: モデルは面の法線、点群は周りの点に平面を当てはめる。平らでなければ 3点指定に切り替え、
-   *   クリックした点を 1 点目にする。
-   * - 3点指定: 3 点目で面を決める。
-   * 足せたら選択ツールに戻る。
-   */
-  planeClick(p: Pick, e: MouseEvent) {
-    if (this.planeMethod === "points") {
-      this.addPlanePoint(p.point);
-      return;
-    }
-    if (p.source === "model" && p.normal && p.normal.lengthSq() > 1e-12) {
-      this.finishPlane(p.point, p.normal, MODEL_NORMAL_TOL_DEG);
-      return;
-    }
-    if (p.source === "cloud" && this.pc) {
-      // 周りの点を集めて当てはめる。範囲は画面で約 16px（近くで細かく、遠くで広く）
-      const d = this.viewer.camera.position.distanceTo(p.point);
-      const radius = THREE.MathUtils.clamp(16 * this.picker.pxSize(d), 0.05, 0.5);
-      const sample = this.pc.collect(this.viewer.camera, this.viewer.toNdc(e.clientX, e.clientY), this.viewer.size, 32, this.viewer.renderer.clippingPlanes);
-      const pts: THREE.Vector3[] = [];
-      for (let i = 0; i < sample.n; i++) pts.push(new THREE.Vector3(sample.pos[i * 3], sample.pos[i * 3 + 1], sample.pos[i * 3 + 2]));
-      const fit = fitCloudPlane(p.point, pts, radius);
-      if (fit) {
-        // クリックした点を面へ落とした所を通す
-        const on = p.point.clone().addScaledVector(fit.normal, -fit.normal.dot(p.point.clone().sub(fit.centroid)));
-        this.finishPlane(on, fit.normal, PICKED_NORMAL_TOL_DEG);
-        return;
-      }
-    }
-    // 面の向きが決まらない（点群の角・縁・まばらな所など）: 3点指定に切り替えて続ける
-    this.planeMethod = "points";
-    this.planePts = [p.point.clone()];
-    this.planeMarks.set(this.planePts);
-    this.snap.refresh();
-    this.emit("tool");
-    this.setHint(`断面: ここは平らな面が見つかりません。3点で決めます: ${this.planeStepHint()}`);
-  }
-
-  private addPlanePoint(pt: THREE.Vector3) {
-    this.planePts.push(pt.clone());
-    if (this.planePts.length < 3) {
-      this.planeMarks.set(this.planePts);
-      this.updateToolHint();
-      this.snap.refresh();
-      this.emit("tool");
-      return;
-    }
-    const [a, b, c] = this.planePts;
-    const n = planeFrom3(a, b, c);
-    if (!n) {
-      this.planePts.pop();
-      this.planeMarks.set(this.planePts);
-      this.setHint(`断面: 3点がほぼ一直線です。3点目を離れた所でクリック　${this.planeStepHint()}`);
-      return;
-    }
-    // 目印は 3 点の真ん中に置く
-    this.finishPlane(a.clone().add(b).add(c).divideScalar(3), n, PICKED_NORMAL_TOL_DEG);
-  }
-
-  private finishPlane(point: THREE.Vector3, normal: THREE.Vector3, tolDeg: number) {
-    const toCamera = this.viewer.camera.position.clone().sub(point);
-    // 平行投影では、カメラの位置より視線の向きの方が確か
-    if (this.viewer.camera instanceof THREE.OrthographicCamera) this.viewer.camera.getWorldDirection(toCamera).negate();
-    this.clipping.addFaceSection(point, normal, toCamera, tolDeg);
-    this.setTool(DEFAULT_TOOL);
-  }
-
-  saveFrame() {
-    if (!this.current) return;
-    localStorage.setItem(`frame:${this.current.site}`, JSON.stringify(this.frame.serialize(this.current.origin)));
-  }
-
-  resetFrame() {
-    this.frame.reset();
-    this.saveFrame();
-    this.emit("measures");
-  }
-
   showCoord(p: Pick | null) {
     const el = $("#st-coord");
     if (!p || !this.current) {
@@ -817,10 +533,12 @@ export class App {
       : `${sourceName(p)}${snap}  WCS ${w.map(f).join(", ")}`;
   }
 
+  // ---- 選択 ----
+
   async select(p: Pick | null) {
     if (this.selection) {
       await this.selection.lm.model.resetHighlight([this.selection.localId]);
-      if (this.diffShown) await this.applyDiffColors(this.selection.lm);
+      await this.diff.applyColors(this.selection.lm);
     }
     this.selection = null;
     if (p?.model) {
@@ -848,202 +566,7 @@ export class App {
     this.emit("selection");
   }
 
-  // ---- 3点合わせ ----
-
-  addAlignPick(p: Pick) {
-    if (!this.current) return;
-    const needModel = this.align.model.length <= this.align.cloud.length;
-    if (needModel) {
-      if (p.source !== "model") return;
-      const toIfc = ifcToScene(this.current).invert();
-      this.align.model.push(p.point.clone().applyMatrix4(toIfc));
-      this.align.modelScene.push(p.point.clone());
-    } else {
-      if (p.source !== "cloud") return;
-      this.align.cloud.push(new THREE.Vector3(...sceneToWorld(this.current, p.point)));
-      this.align.cloudScene.push(p.point.clone());
-    }
-    this.emit("align");
-  }
-
-  /** 最後にクリックした対応点を 1 つ取り消す（点群側に対応する点が見つからないときなど） */
-  undoAlignPick() {
-    const a = this.align;
-    if (a.model.length > a.cloud.length) {
-      a.model.pop();
-      a.modelScene.pop();
-    } else if (a.cloud.length > 0) {
-      a.cloud.pop();
-      a.cloudScene.pop();
-    }
-    if (Math.min(a.model.length, a.cloud.length) < 3) {
-      this.alignPreview = null;
-      this.applyPlacement();
-    }
-    this.emit("align");
-  }
-
-  resetAlign() {
-    this.align = { model: [], cloud: [], modelScene: [], cloudScene: [] };
-    this.alignPreview = null;
-    this.applyPlacement();
-    this.emit("align");
-  }
-
-  // ---- 指摘 ----
-
-  async refreshEvents() {
-    const r = await host.eventsRead(this.eventOffsets);
-    this.eventOffsets = r.offsets;
-    if (r.events.length) {
-      this.events.push(...(r.events as IssueEvent[]));
-      this.issues = foldIssues(this.events);
-      this.renderIssuePins();
-      this.emit("issues");
-    }
-  }
-
-  async appendEvent(e: Partial<IssueEvent>) {
-    await host.eventsAppend(e);
-    await this.refreshEvents();
-  }
-
-  captureView(): IssueView {
-    const m = this.current!;
-    const visibility: any = { pointcloud: this.pc ? { visible: this.pc.group.visible, colorMode: this.pc.material.uniforms.uColorMode.value } : null, models: {} };
-    for (const lm of this.models.models.values()) {
-      if (lm.role !== "current") continue;
-      visibility.models[lm.key] = { visible: lm.visible, opacity: lm.opacity, hidden: [...lm.hiddenKeys], ghost: [...lm.ghostKeys] };
-    }
-    return {
-      camera: {
-        position: sceneToWorld(m, this.viewer.camera.position),
-        target: sceneToWorld(m, this.viewer.controls.target),
-        fov: this.viewer.fov,
-        projection: this.viewer.projection,
-      },
-      clip: this.clipping.serialize(m.origin),
-      visibility,
-      frame: this.frame.serialize(m.origin),
-    };
-  }
-
-  async restoreView(v: IssueView) {
-    const m = this.current;
-    if (!m || !v) return;
-    // 投影を先に切り替える（切り替えは位置を引き継ぐので、位置はその後に置く）
-    this.viewer.setProjection(v.camera.projection === "orthographic" ? "orthographic" : "perspective");
-    this.viewer.camera.position.copy(worldToScene(m, v.camera.position));
-    this.viewer.controls.target.copy(worldToScene(m, v.camera.target));
-    if (v.camera.fov) this.viewer.fov = v.camera.fov;
-    this.viewer.cameraMoved();
-    this.clipping.restore(v.clip, m.origin);
-    if (v.visibility?.pointcloud && this.pc) {
-      this.pc.group.visible = v.visibility.pointcloud.visible;
-      this.pc.setColorMode(v.visibility.pointcloud.colorMode);
-    }
-    for (const lm of this.models.models.values()) {
-      const s = v.visibility?.models?.[lm.key];
-      if (!s || lm.role !== "current") continue;
-      // 以前の指摘はクラス名だけ（全階）で保存している。そのまま全階のクラス指定として効く
-      lm.hiddenKeys = new Set(s.hidden);
-      lm.ghostKeys = new Set(s.ghost);
-      await this.models.setModelVisible(lm, s.visible);
-      await this.models.setModelOpacity(lm, s.opacity);
-    }
-    this.viewer.requestRender();
-    this.emit("display");
-  }
-
-  /** 同じプロジェクト（全ての版）の指摘を位置に重ねて表示する */
-  renderIssuePins() {
-    for (const c of [...this.issuePins.children]) {
-      this.issuePins.remove(c);
-      if (c instanceof CSS2DObject) c.element.remove();
-    }
-    const m = this.current;
-    if (!m) return;
-    let n = 0;
-    for (const issue of this.issues.values()) {
-      if (issue.site !== m.site || !issue.position) continue;
-      n++;
-      const el = document.createElement("div");
-      el.className = `issue-pin s-${issue.status}${issue.dataset !== m.folder ? " other-version" : ""}`;
-      el.title = `${issue.title}（${issue.status}${issue.dataset !== m.folder ? `・第${issue.datasetVersion}版で登録` : ""}）`;
-      el.appendChild(Object.assign(document.createElement("span"), { textContent: String(n) }));
-      el.addEventListener("pointerdown", (e) => e.stopPropagation());
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.selectedIssue = issue.id;
-        this.emit("issue:open");
-      });
-      const obj = new CSS2DObject(el);
-      obj.position.copy(worldToScene(m, issue.position));
-      obj.userData.issue = issue.id;
-      this.issuePins.add(obj);
-    }
-    this.viewer.requestRender();
-  }
-
-  issuesForCurrentSite(): Issue[] {
-    const m = this.current;
-    return [...this.issues.values()].filter((i) => !m || i.site === m.site);
-  }
-
-  memberName(id: string): string {
-    return this.ctx.members.find((m) => m.id === id)?.name || id;
-  }
-
-  // ---- 差分 ----
-
-  async showDiff(on: boolean) {
-    const m = this.current;
-    if (!m || !this.diff) return;
-    this.diffShown = on;
-    // 前の版のモデル（削除された要素を赤の半透明で出す）
-    for (const lm of [...this.models.models.values()]) if (lm.role === "previous") await this.models.unload(`${lm.datasetFolder}/${lm.key}`);
-    for (const lm of this.models.models.values()) {
-      await lm.model.resetColor(undefined);
-      await lm.model.resetHighlight(undefined);
-      if (on) await this.applyDiffColors(lm);
-    }
-    if (on && this.diff.models.removed.length) {
-      const prev = this.datasets.find((d) => d.folder === this.diff!.against);
-      if (prev) {
-        const byModel = new Map<string, string[]>();
-        for (const r of this.diff.models.removed) {
-          if (!byModel.has(r.model)) byModel.set(r.model, []);
-          byModel.get(r.model)!.push(r.guid);
-        }
-        for (const [key, guids] of byModel) {
-          const entry = prev.models.find((x) => x.key === key);
-          if (!entry) continue;
-          const buf = await fetchBytes(fileRel(entry.owner, entry.file));
-          const lm = await this.models.load(key, prev.folder, buf, "previous");
-          // 同じプロジェクトの IFC は同じ座標系なので、表示中の版の座標合わせで置く
-          this.models.setPlacement(lm, ifcToScene(m));
-          const ids = (await lm.model.getLocalIdsByGuids(guids)).filter((x): x is number => x !== null);
-          await lm.model.setVisible(undefined, false);
-          await lm.model.setVisible(ids, true);
-          await lm.model.highlight(ids, { color: DIFF_COLORS.removed, renderedFaces: FRAGS.RenderedFaces.TWO, opacity: 0.45, transparent: true });
-        }
-      }
-    }
-    await this.models.update(true);
-    this.emit("diff");
-  }
-
-  private async applyDiffColors(lm: LoadedModel) {
-    if (!this.diff || lm.role !== "current") return;
-    const pick = async (items: { guid: string; model: string }[]) =>
-      (await lm.model.getLocalIdsByGuids(items.filter((x) => x.model === lm.key).map((x) => x.guid))).filter((x): x is number => x !== null);
-    const added = await pick(this.diff.models.added);
-    const changed = await pick(this.diff.models.changed);
-    if (added.length) await lm.model.setColor(added, DIFF_COLORS.added);
-    if (changed.length) await lm.model.setColor(changed, DIFF_COLORS.changed);
-  }
-
-  /** 要素（GlobalId）へ寄る */
+  /** 要素（GlobalId）へ寄って選ぶ */
   async zoomToGuid(guid: string, modelKey: string, folder?: string) {
     const lm = [...this.models.models.values()].find((x) => x.key === modelKey && (!folder || x.datasetFolder === folder));
     if (!lm) return;

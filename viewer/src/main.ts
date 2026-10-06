@@ -1,22 +1,21 @@
 import "./style.css";
 import * as THREE from "three";
 import { App } from "./app";
-// 標準のツールを登録する（App を作る前に）
+// 標準のツール・左タブ・見え方を登録する（App を作る前に）
 import "./modes/builtinTools";
+import "./modes/builtinPanels";
 import { DEFAULT_TOOL, getTool, toolbarTools } from "./tools/toolRegistry";
 import { formatCount } from "./data/dataset";
 import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
 import { host, isHosted } from "./host";
-import type { Projection, ViewKind } from "./scene/viewer3d";
 import { DataPanel } from "./ui/dataPanel";
-import { renderDiff } from "./ui/diffPanel";
 import { $, anyPopupOpen, setupMenus, showMessage } from "./ui/dom";
 import { openHelp } from "./ui/helpDialog";
-import { IssuePanel } from "./ui/issuePanel";
 import { Navigator } from "./ui/navigator";
+import { mountLeftTabs, mountViewBar } from "./ui/panelHost";
 import { SettingsDialog } from "./ui/settingsDialog";
-import { renderLayers, renderMeasureList, renderNavMenu, renderRight, renderToolOptions, syncClipPanel, updatePcStats } from "./ui/viewPanels";
+import { renderRight, renderToolOptions, syncClipPanel, updatePcStats } from "./ui/viewPanels";
 
 
 async function main() {
@@ -37,7 +36,9 @@ async function main() {
   if (!localStorage.getItem("pointBudget") && budget > 0) app.pointBudget = budget;
 
   const data = new DataPanel(app);
-  const issues = new IssuePanel(app);
+  // 左タブ・見え方は登録から作る（メニューの開閉を付ける setupMenus より前に）
+  const renderTabs = mountLeftTabs(app);
+  const syncViewBar = mountViewBar(app);
   setupMenus();
   $("#btn-help").addEventListener("click", () => openHelp());
 
@@ -50,58 +51,16 @@ async function main() {
       b.title = off ? `プロジェクトを開くと使えます。${b.dataset.title}` : b.dataset.title;
     });
   };
+  // 左タブ・見え方の描き直しは、それぞれの登録（modes/builtinPanels.ts）の topics で行う
   app.on("dataset", () => {
     syncEnabled();
-    renderLayers(app);
-    renderDiff(app);
-    renderMeasureList(app);
     renderRight(app);
-    syncClipButtons();
   });
-  app.on("display", () => renderLayers(app));
-  app.on("nav", () => renderNavMenu(app));
   new Navigator(app);
-  app.on("diff", () => {
-    renderDiff(app);
-    renderLayers(app);
-  });
   app.on("selection", () => renderRight(app));
-  app.on("measures", () => {
-    renderMeasureList(app);
-    renderToolOptions(app);
-    // UCS が変わると、垂直断面の追加の軸（UCS / WCS）が変わる
-    syncClipButtons();
-  });
-  // 切断の状態はメニュー以外（指摘の視点再現・プロジェクトを開き直す）でも変わるので、表示を毎回合わせる
-  const syncClipButtons = () => {
-    const clip = app.clipping;
-    const n = clip.enabledSections;
-    const parts = [clip.boxOn ? "ボックス" : "", n ? `断面 ${n}` : ""].filter(Boolean);
-    const btn = $("#btn-clip");
-    btn.textContent = `切断: ${parts.length ? parts.join("＋") : "なし"}${clip.active && !clip.showGuides ? "（枠なし）" : ""} ▾`;
-    btn.classList.toggle("on", clip.active);
-    const check = (id: string, on: boolean) => {
-      const c = $(id) as HTMLInputElement;
-      c.checked = on;
-      c.closest("[role=menuitemcheckbox]")?.setAttribute("aria-checked", String(on));
-    };
-    check("#chk-clip-box", clip.boxOn);
-    check("#chk-clip-guides", clip.showGuides);
-    ($("#btn-clip-off") as HTMLButtonElement).disabled = !clip.active;
-    // 垂直断面は UCS を設定していれば UCS の軸に直交
-    const ucs = app.frame.isSet;
-    for (const a of ["x", "y"] as const) {
-      const b = document.querySelector<HTMLButtonElement>(`[data-add-section=${a}]`)!;
-      const name = `${ucs ? "UCS " : ""}${a.toUpperCase()}`;
-      b.textContent = `垂直断面を追加（${name}）`;
-      b.title = `今見ている所を通り、${name} 軸に直交する面で切る`;
-    }
-  };
-  app.on("clip", () => {
-    // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
-    syncClipPanel(app);
-    syncClipButtons();
-  });
+  app.on("measures", () => renderToolOptions(app));
+  // 値だけの変化（スライダー・3D のドラッグ中）はパネルを作り直さない。作り直すとドラッグが切れる
+  app.on("clip", () => syncClipPanel(app));
   app.on("align", () => renderToolOptions(app));
   app.on("tool", () => renderRight(app));
   app.on("pcstats", () => updatePcStats(app));
@@ -121,31 +80,6 @@ async function main() {
     });
     toolGroup.appendChild(b);
   }
-  // 切断メニュー: 足す・オフ・枠の表示はここだけ（右のパネルは今ある切断の調整）
-  $("#chk-clip-box").addEventListener("change", (e) => app.setClipBox((e.target as HTMLInputElement).checked));
-  document.querySelectorAll<HTMLButtonElement>("[data-add-section]").forEach((b) =>
-    b.addEventListener("click", () => app.addAxisSection(b.dataset.addSection as "x" | "y" | "z")),
-  );
-  $("#btn-add-face-section").addEventListener("click", () => app.startPlaneTool());
-  $("#btn-clip-off").addEventListener("click", () => app.clipping.disableAll());
-  // 枠の表示（切断は効いたまま）。メニューを閉じずに切り替えられる
-  $("#chk-clip-guides").addEventListener("change", (e) => app.clipping.setShowGuides((e.target as HTMLInputElement).checked));
-  document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) =>
-    b.addEventListener("click", () => app.viewer.setView(b.dataset.view as ViewKind, app.viewBox())),
-  );
-  // 投影の切替（平行投影 / 透視）。指摘の視点再現でも切り替わるので、ボタンの表示は viewer の通知で合わせる
-  const projBtn = $("#btn-projection") as HTMLButtonElement;
-  const syncProjection = (p: Projection) => {
-    const on = p === "orthographic";
-    projBtn.classList.toggle("active", on);
-    projBtn.setAttribute("aria-pressed", String(on));
-    localStorage.setItem("projection", p);
-  };
-  app.viewer.onProjectionChange(syncProjection);
-  const toggleProjection = () => app.viewer.setProjection(app.viewer.projection === "orthographic" ? "perspective" : "orthographic");
-  projBtn.addEventListener("click", toggleProjection);
-  if (localStorage.getItem("projection") === "orthographic") app.viewer.setProjection("orthographic");
-  syncProjection(app.viewer.projection);
   // 左右パネルの折りたたみ（狭い画面で 3D 画面を広げる）。状態はこの PC に覚える
   const appEl = $("#app");
   const setPanel = (side: "left" | "right", collapsed: boolean, focus = false) => {
@@ -161,15 +95,6 @@ async function main() {
   }
   // 折りたたんだ側のタブ・指摘を開く操作（3D の指摘ピンなど）が来たら開く
   app.on("issue:open", () => setPanel("left", false));
-  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
-    b.addEventListener("click", () => {
-      document.querySelectorAll("[data-tab]").forEach((x) => {
-        x.classList.toggle("active", x === b);
-        x.setAttribute("aria-selected", String(x === b));
-      });
-      document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${b.dataset.tab}`));
-    }),
-  );
 
   // 3D 画面のクリック（ドラッグで回したときは無視する）
   const canvas = app.viewer.canvas;
@@ -200,11 +125,11 @@ async function main() {
   canvas.addEventListener("pointerleave", () => app.snap.leave());
   window.addEventListener("blur", () => {
     app.snap.setFreeHeld(false);
-    app.setShiftHeld(false);
+    app.measureMode.setShiftHeld(false);
   });
   window.addEventListener("keyup", (e) => {
     if (e.key === "Alt") app.snap.setFreeHeld(false);
-    if (e.key === "Shift") app.setShiftHeld(false);
+    if (e.key === "Shift") app.measureMode.setShiftHeld(false);
   });
   canvas.addEventListener("dblclick", async (e) => {
     // 計測中のダブルクリックは折れ線の確定に使う（注視点は動かさない）
@@ -241,7 +166,7 @@ async function main() {
       app.snap.setEnabled(!app.snap.enabled);
       renderToolOptions(app);
     } else if (key === "p" && plain && app.current) {
-      toggleProjection();
+      app.toggleProjection();
     } else if (key === "b" && plain && !e.shiftKey && app.current) {
       app.clipping.setShowGuides(!app.clipping.showGuides);
     } else if (e.key === "F1" || (e.key === "?" && !e.ctrlKey && !e.altKey)) {
@@ -263,7 +188,7 @@ async function main() {
   // 保存先の取込・指摘の変化を拾う（データはこの PC のローカルだけ。外部とは同期しない。要件定義 5.3）
   const poll = async () => {
     try {
-      await app.refreshEvents();
+      await app.issues.refresh();
     } catch (e) {
       console.warn(e);
     }
@@ -282,19 +207,15 @@ async function main() {
   const start = app.datasets.find((d) => d.folder === last);
   if (start) app.setLoading(`${start.name}（第${start.version}版）を開いています…`);
   data.render();
-  issues.render();
   syncEnabled();
-  renderLayers(app);
-  renderDiff(app);
-  renderMeasureList(app);
+  renderTabs();
   renderRight(app);
-  renderNavMenu(app);
-  syncClipButtons();
+  syncViewBar();
 
   if (start) await app.openDataset(start).catch((e) => showMessage("開けません", String(e)));
 
   // E2E テスト・計測用（開発モードのみ）
-  if (app.ctx.dev) (window as any).__kasane = { app, host, data, issues, settings, THREE, attributeSignature, solveRigid };
+  if (app.ctx.dev) (window as any).__kasane = { app, host, data, settings, THREE, attributeSignature, solveRigid };
 }
 
 main().catch((e) => {
