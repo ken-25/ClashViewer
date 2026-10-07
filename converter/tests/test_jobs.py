@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from kasane_converter import cli, jobs
+from kasane_converter.potree_reader import PotreeReader
 
 from . import potree_fixture
 
@@ -78,3 +82,56 @@ def test_dataset_file_rejects_escape(tmp_path):
         ctx.pointcloud_dir()
     except jobs.JobError as e:
         assert "点群" in str(e)
+
+
+def _potree_exe():
+    root = Path(__file__).resolve().parents[2]
+    for p in sorted((root / "third_party" / "PotreeConverter").glob("*/PotreeConverter.exe")):
+        return p
+    return None
+
+
+def test_param_conversion(tmp_path):
+    ctx = jobs.JobContext(manifest={}, manifest_path=tmp_path / "m.json", datasets=tmp_path, params={"step": "3", "bad": "x", "empty": ""},
+                          out=tmp_path, work=tmp_path)
+    assert ctx.param("step", 1, int) == 3
+    assert ctx.param("empty", 5, int) == 5
+    assert ctx.param("none", 7) == 7
+    with pytest.raises(jobs.JobError):
+        ctx.param("bad", 1, int)
+
+
+def test_new_version_requires_potree(tmp_path, capsys):
+    datasets, folder = _dataset(tmp_path)
+    code, lines = _run(capsys, ["selftest-version", "--manifest", str(folder / "manifest.json"), "--datasets", str(datasets),
+                                "--out", str(tmp_path / "out"), "--work", str(tmp_path / "w")])
+    assert code == 1
+    assert "PotreeConverter" in lines[-1]["message"]
+
+
+@pytest.mark.skipif(_potree_exe() is None, reason="third_party/PotreeConverter がありません（scripts/fetch-third-party.ps1）")
+def test_new_version_end_to_end(tmp_path, capsys):
+    datasets, folder = _dataset(tmp_path)
+    out = tmp_path / "out"
+    params = tmp_path / "params.json"
+    params.write_text(json.dumps({"step": 2}), encoding="utf-8")
+    code, lines = _run(capsys, ["selftest-version", "--manifest", str(folder / "manifest.json"), "--datasets", str(datasets),
+                                "--params", str(params), "--out", str(out), "--work", str(tmp_path / "w"),
+                                "--potree", str(_potree_exe())])
+    assert code == 0, lines[-1]
+    result = [x for x in lines if x["event"] == "result"][0]
+    pc = result["pointcloud"]
+    assert result["keptPoints"] == 6 and pc["points"] == 6
+    assert sum(pc["classCounts"].values()) == 6
+    assert set(pc["classCounts"]) <= {"2", "3", "4", "5", "6"}
+    assert "selftest height" in pc["attributes"] and "classification" in pc["attributes"]
+    # 出力は out/pointcloud/ の 3 ファイルだけ（LAS・ログは残さない）
+    assert sorted(p.name for p in (out / "pointcloud").iterdir()) == ["hierarchy.bin", "metadata.json", "octree.bin"]
+    r = PotreeReader(out / "pointcloud")
+    blk = r.read_all()
+    assert len(blk.xyz) == 6
+    assert blk.attrs["selftest height"].min() >= 0
+    # 色（rgb）は元の値のまま
+    assert int(blk.attrs["rgb"].max()) == 40000
+    # 版のフォルダには書かない
+    assert sorted(p.name for p in folder.iterdir()) == ["manifest.json", "pointcloud"]

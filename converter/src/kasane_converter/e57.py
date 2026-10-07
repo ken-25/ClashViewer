@@ -95,6 +95,46 @@ class ScanInfo:
     fields: list[str] = field(default_factory=list)
 
 
+#: 画像の表し方（E57 の images2D の子）。先にあるものを使う。visualReferenceRepresentation は
+#: 姿勢と結び付かない参考画像なので使わない
+IMAGE_REPRESENTATIONS: tuple[tuple[str, str], ...] = (
+    ("sphericalRepresentation", "spherical"),
+    ("pinholeRepresentation", "pinhole"),
+    ("cylindricalRepresentation", "cylindrical"),
+)
+
+
+@dataclass
+class ImageInfo:
+    """images2D の 1 枚（撮影ポイントで撮った画像）。座標・角度は E57 のまま（m・ラジアン）。"""
+
+    index: int
+    name: str
+    guid: str
+    #: 結び付いたスキャンの guid（無ければ空）
+    scan_guid: str
+    #: spherical（360 画像）/ pinhole（普通の写真）/ cylindrical
+    kind: str
+    #: jpeg / png
+    format: str
+    byte_count: int
+    width: int
+    height: int
+    #: spherical・cylindrical は 1 画素の角度（ラジアン）、pinhole は 1 画素の大きさ（m）
+    pixel_width: float
+    pixel_height: float
+    #: pinhole だけ: 焦点距離（m）と主点（画素）
+    focal_length: float | None = None
+    principal_point: list[float] | None = None
+    #: cylindrical だけ: 半径（m）と主点の縦位置（画素）
+    radius: float | None = None
+    principal_y: float | None = None
+    #: 画像の姿勢（ファイルの座標系）。E57 では省略できる
+    has_pose: bool = False
+    rotation: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
+    translation: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+
+
 @dataclass
 class PointChunk:
     xyz: np.ndarray  # (n, 3) float64、共通座標（m）
@@ -127,6 +167,18 @@ class E57Reader:
         # pye57 の [] アクセスは具体的なノード型を返す
         self.data3d = root["data3D"]
         self.scans = [self._scan_info(i) for i in range(self.data3d.childCount())]
+        # 画像（images2D）は無いファイルが多い。読めない画像は外して、取込は止めない
+        self.images2d = root["images2D"] if root.isDefined("images2D") else None
+        self.images: list[ImageInfo] = []
+        self.image_errors: list[str] = []
+        for i in range(self.images2d.childCount() if self.images2d is not None else 0):
+            try:
+                info = self._image_info(i)
+            except Exception as e:  # 壊れた・未対応の画像は 1 枚ずつ外す
+                self.image_errors.append(f"画像 {i}: {e}")
+                continue
+            if info is not None:
+                self.images.append(info)
 
     def close(self) -> None:
         self.image.close()
@@ -182,6 +234,67 @@ class E57Reader:
             translation=translation,
             fields=fields,
         )
+
+    def _image_info(self, index: int) -> ImageInfo | None:
+        node = self.images2d[index]
+        found = next(((key, kind) for key, kind in IMAGE_REPRESENTATIONS if node.isDefined(key)), None)
+        if found is None:
+            return None  # 参考画像だけ（姿勢と結び付かない）
+        key, kind = found
+        rep = node[key]
+        if rep.isDefined("jpegImage"):
+            fmt, blob = "jpeg", rep["jpegImage"]
+        elif rep.isDefined("pngImage"):
+            fmt, blob = "png", rep["pngImage"]
+        else:
+            raise ValueError("JPEG / PNG の画像がありません")
+        has_pose = node.isDefined("pose")
+        info = ImageInfo(
+            index=index,
+            name=str(_child_value(node, "name", f"Image {index}")),
+            guid=str(_child_value(node, "guid", "")),
+            scan_guid=str(_child_value(node, "associatedData3DGuid", "")),
+            kind=kind,
+            format=fmt,
+            byte_count=int(blob.byteCount()),
+            width=int(_child_value(rep, "imageWidth", 0)),
+            height=int(_child_value(rep, "imageHeight", 0)),
+            pixel_width=float(_child_value(rep, "pixelWidth", 0.0)),
+            pixel_height=float(_child_value(rep, "pixelHeight", 0.0)),
+            has_pose=has_pose,
+        )
+        if kind == "pinhole":
+            info.focal_length = float(_child_value(rep, "focalLength", 0.0))
+            info.principal_point = [
+                float(_child_value(rep, "principalPointX", info.width / 2)),
+                float(_child_value(rep, "principalPointY", info.height / 2)),
+            ]
+        elif kind == "cylindrical":
+            info.radius = float(_child_value(rep, "radius", 0.0))
+            info.principal_y = float(_child_value(rep, "principalPointY", info.height / 2))
+        if has_pose:
+            info.rotation = [
+                float(_child_value(node, f"pose/rotation/{k}", d)) for k, d in (("w", 1.0), ("x", 0.0), ("y", 0.0), ("z", 0.0))
+            ]
+            info.translation = [float(_child_value(node, f"pose/translation/{k}", 0.0)) for k in ("x", "y", "z")]
+        if info.width <= 0 or info.height <= 0 or info.byte_count <= 0:
+            raise ValueError("画像の大きさがありません")
+        return info
+
+    def write_image(self, image: ImageInfo, dst: str, chunk: int = 8 << 20) -> int:
+        """画像の中身（JPEG / PNG のまま）をファイルへ書く。大きな画像も一定量ずつ読む。"""
+        rep = self.images2d[image.index][next(k for k, kind in IMAGE_REPRESENTATIONS if kind == image.kind)]
+        blob = rep["jpegImage" if image.format == "jpeg" else "pngImage"]
+        total = int(blob.byteCount())
+        buf = np.empty(min(chunk, max(total, 1)), dtype=np.uint8)
+        done = 0
+        with open(dst, "wb") as f:
+            while done < total:
+                n = min(len(buf), total - done)
+                blob.read(buf, done, n)
+                f.write(buf[:n].tobytes())
+                done += n
+        return total
 
     @staticmethod
     def _intensity_limits_from_prototype(node) -> tuple[float, float]:

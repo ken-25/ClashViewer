@@ -29,7 +29,7 @@ public sealed class MainForm : Form
         var local = new LocalFiles();
         _imports = new ImportService(paths, user);
         var datasets = new DatasetStore(paths);
-        _jobs = new JobService(paths, user, dev, datasets);
+        _jobs = new JobService(paths, user, dev, datasets, _imports);
         _server = new ResourceServer(paths, local, _imports);
         _bridge = new Bridge(paths, user, dev, local, _imports, _jobs, datasets, new EventStore(paths, user), this);
 

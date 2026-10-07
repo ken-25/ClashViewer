@@ -1,6 +1,10 @@
 import * as FRAGS from "@thatopen/fragments";
 import * as THREE from "three";
-import { fetchBytes, host, onJobProgress, type HostContext, type JobProgress } from "./host";
+import { fetchBytes, host, onJobProgress, type HostContext, type JobKindInfo, type JobProgress } from "./host";
+import { isActiveJob, newJobState, reduceJob, type JobState } from "./data/jobs";
+import { DerivedLayers } from "./features/derivedLayers";
+import { ScanPoints } from "./features/scanPoints";
+import { PointAttributes } from "./features/pointAttributes";
 import { DEFAULT_TOOL, getTool, type ToolId } from "./tools/toolRegistry";
 import { fileRel, groupBySite, ifcToScene, migrateManifests, sceneToWorld, worldToScene, type Manifest } from "./data/dataset";
 import { AlignMode } from "./features/alignMode";
@@ -28,7 +32,10 @@ export type Tool = ToolId;
 /**
  * App が出す通知の名前。購読は app.on(名前, cb)。足すときはここに追記する（打ち間違いを型で止める）。
  * jobs: 処理（ジョブ）の進捗・完了（app.jobs が変わった）
+ * derived: 処理の結果のレイヤー（app.derivedLayers）の状態が変わった
  * projection: 平行投影・透視が切り替わった
+ * scans: 撮影ポイント（app.scanPoints）の一覧・立っている所・画像・巡回の状態が変わった
+ * display: 点群・モデルの見え方（色分け・分類の表示など）が変わった
  */
 export type AppTopic =
   | "datasets"
@@ -46,18 +53,11 @@ export type AppTopic =
   | "issue:new"
   | "issue:open"
   | "jobs"
-  | "projection";
+  | "derived"
+  | "projection"
+  | "scans";
 
-/** 実行中・直近に終わった処理（ジョブ）の状態 */
-export interface JobState {
-  jobId: string;
-  kind: string;
-  folder: string;
-  status: "running" | "done" | "failed" | "aborted";
-  /** 最後の段階・進捗（stage / progress の通知） */
-  last: JobProgress | null;
-  message?: string;
-}
+export type { JobState } from "./data/jobs";
 
 /** 位置の目印（画面端の矢印・小地図）に出すもの。box はシーン座標（原点は大きさ 0 の箱） */
 export interface NavTarget {
@@ -113,8 +113,10 @@ export class App {
   pointBudget = 3_000_000;
   nav: NavSettings = loadNavSettings();
   private listeners = new Map<AppTopic, Set<() => void>>();
-  /** 処理（ジョブ）の状態。jobId → 状態。終わったものも画面を閉じるまで残す */
+  /** 処理（ジョブ）の状態。jobId → 状態。終わったものも画面を閉じるまで残す（始めた順） */
   readonly jobs = new Map<string, JobState>();
+  /** 使える処理の種類（起動時にホストから読む） */
+  jobKinds: JobKindInfo[] = [];
 
   // ---- 機能（状態と操作はそれぞれのモジュール） ----
   /** 計測の操作（軸の固定・吸着・点の追加）。結果は measure */
@@ -129,6 +131,12 @@ export class App {
   readonly issues: IssueStore;
   /** 前の版との差分 */
   readonly diff: DiffView;
+  /** 点の属性の表示（分類・値の色分け、分類ごとの表示切替） */
+  readonly pointAttrs: PointAttributes;
+  /** 処理の結果のレイヤー */
+  readonly derivedLayers: DerivedLayers;
+  /** 撮影ポイント（器械点の目印・その場で見回す視点・画像） */
+  readonly scanPoints: ScanPoints;
   /** 版を開く・閉じるときに呼ぶ機能（登録順） */
   private readonly features: AppFeature[];
 
@@ -153,7 +161,10 @@ export class App {
     this.align = new AlignMode(this);
     this.issues = new IssueStore(this);
     this.diff = new DiffView(this);
-    this.features = [this.measureMode, this.ucs, this.section, this.align, this.issues, this.diff];
+    this.pointAttrs = new PointAttributes(this);
+    this.derivedLayers = new DerivedLayers(this);
+    this.scanPoints = new ScanPoints(this);
+    this.features = [this.measureMode, this.ucs, this.section, this.align, this.issues, this.diff, this.pointAttrs, this.derivedLayers, this.scanPoints];
 
     this.snap.options = () => this.snapOptions();
     this.snap.augment = (list, x, y) => this.measureMode.addAxisCandidate(list, x, y);
@@ -197,10 +208,14 @@ export class App {
 
   // ---- 処理（ジョブ） ----
 
-  /** 公開済みの版に対する処理を始める。進捗は "jobs" の通知と app.jobs で追う */
+  /**
+   * 公開済みの版に対する処理を始める。待ち行列に入り、順番が来たら動く。
+   * 進捗は "jobs" の通知と app.jobs で追う
+   */
   async startJob(kind: string, folder: string, params: Record<string, unknown> = {}): Promise<string> {
     const r = await host.jobStart(kind, folder, params);
-    this.jobs.set(r.jobId, { jobId: r.jobId, kind: r.kind, folder: r.folder, status: "running", last: null });
+    // 開始の応答より先に通知（queued / started）が届いていることがある
+    if (!this.jobs.has(r.jobId)) this.jobs.set(r.jobId, newJobState(r.jobId, r.kind, r.folder));
     this.emit("jobs");
     return r.jobId;
   }
@@ -209,33 +224,48 @@ export class App {
     await host.jobAbort(jobId);
   }
 
-  /** ホストの job.progress を状態に畳む。完了したら一覧と開いている版の manifest を読み直す */
-  private async onJobProgress(p: JobProgress) {
-    const cur = this.jobs.get(p.jobId) ?? { jobId: p.jobId, kind: p.kind, folder: p.folder, status: "running" as const, last: null };
-    if (p.event === "stage" || p.event === "progress") cur.last = p;
-    else if (p.event === "log") return;
-    else if (p.event === "error") cur.message = p.message;
-    else if (p.event === "failed") Object.assign(cur, { status: "failed", message: p.message });
-    else if (p.event === "aborted") cur.status = "aborted";
-    else if (p.event === "done") {
-      // 一覧を読み直してから done にする（done を見た側が古い一覧を読まないように）
-      await this.refreshDatasets();
-      cur.status = "done";
-      // 開いている版なら derived を差し替える（版の本体は変わらないので開き直さない）
-      const fresh = this.datasets.find((d) => d.folder === p.folder);
-      if (this.current && fresh && this.current.folder === p.folder) this.current.derived = fresh.derived;
-    }
-    this.jobs.set(p.jobId, cur);
+  jobKind(id: string): JobKindInfo | undefined {
+    return this.jobKinds.find((k) => k.id === id);
+  }
+
+  /** 待っている・動いている処理の数 */
+  get activeJobCount(): number {
+    return [...this.jobs.values()].filter(isActiveJob).length;
+  }
+
+  /** 終わった処理を一覧から消す（待っている・動いているものは残す） */
+  clearFinishedJobs() {
+    for (const [id, j] of this.jobs) if (!isActiveJob(j)) this.jobs.delete(id);
     this.emit("jobs");
   }
 
-  /** 起動時: 実行中の処理を拾い、以降の通知を受ける */
+  /** ホストの job.progress を状態に畳む。完了したら一覧と開いている版の manifest を読み直す */
+  private async onJobProgress(p: JobProgress) {
+    const cur = this.jobs.get(p.jobId) ?? newJobState(p.jobId, p.kind, p.folder);
+    this.jobs.set(p.jobId, cur);
+    if (p.event === "log" && p.level === "info") return;
+    if (p.event === "done") {
+      // 一覧を読み直してから done にする（done を見た側が古い一覧を読まないように）。
+      // 開いている版の derived もここで差し替わる（版の本体は変わらないので開き直さない）
+      await this.refreshDatasets();
+    }
+    reduceJob(cur, p);
+    this.emit("jobs");
+  }
+
+  /** 起動時: 処理の種類と、待っている・動いている処理を拾い、以降の通知を受ける */
   async attachJobs() {
     onJobProgress((p) => void this.onJobProgress(p).catch((e) => console.warn(e)));
-    for (const j of await host.jobList()) {
-      this.jobs.set(j.jobId, { jobId: j.jobId, kind: j.kind, folder: j.folder, status: "running", last: j.last });
+    const [kinds, active] = await Promise.all([host.jobKinds(), host.jobList()]);
+    this.jobKinds = kinds;
+    for (const j of active) {
+      const s = this.jobs.get(j.jobId) ?? newJobState(j.jobId, j.kind, j.folder, j.status);
+      if (j.status === "queued") reduceJob(s, { jobId: j.jobId, kind: j.kind, folder: j.folder, event: "queued", position: j.position });
+      else reduceJob(s, { jobId: j.jobId, kind: j.kind, folder: j.folder, event: "started" });
+      if (j.last) reduceJob(s, j.last);
+      this.jobs.set(j.jobId, s);
     }
-    if (this.jobs.size) this.emit("jobs");
+    this.emit("jobs");
   }
 
   setHint(msg: string) {
@@ -261,6 +291,12 @@ export class App {
     const { ok, skipped } = migrateManifests(await host.listDatasets());
     for (const s of skipped) console.warn(`版 ${s.folder} を読めません: ${s.reason}`);
     this.datasets = ok;
+    // 開いている版の成果（derived は追記だけ）が増えていれば反映する
+    const fresh = this.current && ok.find((d) => d.folder === this.current!.folder);
+    if (this.current && fresh && fresh.derived.length !== this.current.derived.length) {
+      this.current.derived = fresh.derived;
+      this.derivedLayers.sync(this.current);
+    }
     this.emit("datasets");
   }
 
@@ -304,6 +340,8 @@ export class App {
         const pc = await PotreePointCloud.load(fileRel(m.pointcloud.owner, m.pointcloud.dir), origin, {
           pointBudget: this.pointBudget,
           maxLoadedPoints: Math.max(this.pointBudget * 2.5, 2_000_000),
+          // 前回の色分け（分類・値）に要る属性は最初から読む（開いた後に読み直さないように）
+          extraAttributes: this.pointAttrs.wantedOnOpen(),
         });
         pc.onChange = () => {
           this.viewer.requestRender();
@@ -467,9 +505,9 @@ export class App {
     this.viewer.requestRender();
   }
 
+  /** 点群の色の方法（分類・値は要る属性を読み直す。features/pointAttributes.ts） */
   setColorMode(m: ColorMode) {
-    this.pc?.setColorMode(m);
-    this.viewer.requestRender();
+    this.pointAttrs.setColorMode(m);
   }
 
   // ---- ツール ----
@@ -483,6 +521,8 @@ export class App {
     document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
     // 計測・合わせ中は指摘のピンをクリックで反応させない（ピンの下の点を拾えるように）
     document.body.classList.toggle("tool-active", t !== DEFAULT_TOOL);
+    // ツールごとの見た目（撮影ポイントの目印は撮影ポイントのツールでも押せる、など）
+    document.body.dataset.tool = t;
     this.updateToolHint();
     this.snap.refresh();
     this.emit("tool");

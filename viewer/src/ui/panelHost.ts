@@ -27,7 +27,7 @@ export function mountLeftTabs(app: App): () => void {
   for (const [i, def] of defs.entries()) {
     const badge = def.badge ? h("span", { class: "badge", id: `${def.id}-count` }) : null;
     const btn = h("button", { role: "tab", "data-tab": def.id, id: `tabbtn-${def.id}`, "aria-controls": `tab-${def.id}`, "aria-selected": String(i === 0), class: i === 0 ? "active" : "" },
-      def.label, badge ? " " : null, badge);
+      def.label, badge);
     btn.addEventListener("click", () => activateLeftTab(def.id));
     nav.insertBefore(btn, close);
     const panel = h("section", { id: `tab-${def.id}`, class: `tab${i === 0 ? " active" : ""}`, role: "tabpanel", "aria-labelledby": `tabbtn-${def.id}` });

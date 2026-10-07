@@ -4,7 +4,10 @@ import { App } from "./app";
 // 標準のツール・左タブ・見え方を登録する（App を作る前に）
 import "./modes/builtinTools";
 import "./modes/builtinPanels";
-import { DEFAULT_TOOL, getTool, toolbarTools } from "./tools/toolRegistry";
+import "./modes/builtinJobs";
+import "./modes/scanPointsTool";
+import type { AppTopic } from "./app";
+import { allTools, DEFAULT_TOOL, getTool, toolbarTools } from "./tools/toolRegistry";
 import { formatCount } from "./data/dataset";
 import { attributeSignature } from "./data/diff";
 import { solveRigid } from "./tools/align";
@@ -79,6 +82,25 @@ async function main() {
       app.setTool(def.id);
     });
     toolGroup.appendChild(b);
+  }
+  // 使えないツール（使える処理が無いなど）はボタンを出さない。使っている途中で使えなくなったら選択に戻す
+  const syncAvailable = () => {
+    for (const def of toolbarTools()) {
+      const ok = def.available?.(app) ?? true;
+      toolGroup.querySelector<HTMLElement>(`[data-tool="${CSS.escape(def.id)}"]`)?.classList.toggle("hidden", !ok);
+      if (!ok && app.tool === def.id) app.setTool(DEFAULT_TOOL);
+    }
+  };
+  // ツールの右パネルの更新（panelTopics。使っているツールの分だけ）
+  const panelTopics = new Set<AppTopic>(allTools().flatMap((t) => t.panelTopics ?? []));
+  for (const topic of panelTopics) {
+    app.on(topic, () => {
+      syncAvailable();
+      const def = getTool(app.tool);
+      if (!def.panelTopics?.includes(topic)) return;
+      if (def.refreshPanel) def.refreshPanel(app, $("#tool-opts"));
+      else renderToolOptions(app);
+    });
   }
   // 左右パネルの折りたたみ（狭い画面で 3D 画面を広げる）。状態はこの PC に覚える
   const appEl = $("#app");
@@ -208,6 +230,7 @@ async function main() {
   if (start) app.setLoading(`${start.name}（第${start.version}版）を開いています…`);
   data.render();
   syncEnabled();
+  syncAvailable();
   renderTabs();
   renderRight(app);
   syncViewBar();

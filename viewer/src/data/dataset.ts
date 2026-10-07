@@ -12,12 +12,21 @@ export interface PointcloudEntry {
   owner: string; // ファイルを持つデータセットのフォルダ（通常は自分。PoC 初期の版は前の版を指すことがある）
   carriedFrom?: string; // 前の版から複製したときの元のフォルダ
   dir: string; // owner 内の相対パス
-  sources: (SourceFile & { points?: number; scans?: any[] })[];
+  /** scans: スキャンの姿勢・範囲、images: 撮影ポイントの画像（形は data/scanPoints.ts の ScanRecord / ScanImage） */
+  sources: (SourceFile & { points?: number; scans?: any[]; images?: any[] })[];
+  /** 撮影ポイントの画像を書き出した数（F6 以降の取込だけ） */
+  imageCount?: number;
   points: number;
   scanCount: number;
   bounds: { min: number[]; max: number[] };
   outputSizes?: Record<string, number>;
   timings?: Record<string, number>;
+  /** 処理で作り直した点群のとき、元の版と処理の種類（app/Kasane.Host/NewVersion.cs） */
+  derivedFrom?: { folder: string; jobKind: string };
+  /** 分類ごとの点数（処理で作り直した点群だけ。キーは分類の番号） */
+  classCounts?: Record<string, number>;
+  /** 点群の属性名（処理で作り直した点群だけ） */
+  attributes?: string[];
 }
 
 export interface FailedElement {

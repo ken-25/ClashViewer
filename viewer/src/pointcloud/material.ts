@@ -9,7 +9,18 @@ export enum ColorMode {
   Intensity = 1,
   Height = 2,
   Solid = 3,
+  /** 分類（PotreePointCloud.setClassAttribute で選んだ属性）ごとの色 */
+  Classification = 4,
+  /** 値（setScalarAttribute で選んだ属性）を色の帯で */
+  Scalar = 5,
 }
+
+/**
+ * 分類・値に使う属性をシェーダーへ渡す名前。各ノードの geometry の `attr:<名前>` を、選んだときにこの名前でも付ける
+ * （`attr:...` は GLSL の識別子に使えないため）
+ */
+export const CLASS_ATTRIBUTE = "aClass";
+export const SCALAR_ATTRIBUTE = "aScalar";
 
 export enum SizeMode {
   Fixed = 0,
@@ -26,6 +37,8 @@ precision highp int;
 
 attribute vec4 rgba;
 attribute float intensity;
+attribute float aClass;
+attribute float aScalar;
 
 uniform float uSize;
 uniform float uMinSize;
@@ -44,6 +57,11 @@ uniform vec2 uIntensityRange;
 uniform vec3 uSolid;
 uniform bool uHasRgb;
 uniform bool uHasIntensity;
+// 分類ごとの色（RGB）と表示（A: 1=表示 0=非表示）。256×1
+uniform highp sampler2D uClassTable;
+// 非表示の分類があるときだけ true（分類の属性を読んでいるとき）
+uniform bool uClassFilter;
+uniform vec2 uScalarRange;
 
 varying vec3 vColor;
 
@@ -113,7 +131,20 @@ void main() {
   }
   gl_PointSize = clamp(size, uMinSize, uMaxSize);
 
-  if (uColorMode == 0 && uHasRgb) {
+  vec4 cls = texelFetch(uClassTable, ivec2(clamp(int(aClass + 0.5), 0, 255), 0), 0);
+  if (uClassFilter && cls.a < 0.5) {
+    // 非表示の分類: 画面の外（クリップ空間の外）へ出して描かない
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    vColor = vec3(0.0);
+    return;
+  }
+
+  if (uColorMode == 4) {
+    vColor = cls.rgb;
+  } else if (uColorMode == 5) {
+    vColor = ramp((aScalar - uScalarRange.x) / max(1e-6, uScalarRange.y - uScalarRange.x));
+  } else if (uColorMode == 0 && uHasRgb) {
     vColor = rgba.rgb;
   } else if (uColorMode == 1 && uHasIntensity) {
     float t = (intensity - uIntensityRange.x) / max(1e-6, uIntensityRange.y - uIntensityRange.x);
@@ -146,6 +177,8 @@ void main() {
 
 export class PointCloudMaterial extends THREE.ShaderMaterial {
   readonly visibleNodesTexture: THREE.DataTexture;
+  /** 分類ごとの色と表示（setClassTable で差し替える） */
+  readonly classTexture: THREE.DataTexture;
 
   constructor() {
     const data = new Uint8Array(VN_TEX_WIDTH * 4 * 4);
@@ -153,6 +186,10 @@ export class PointCloudMaterial extends THREE.ShaderMaterial {
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.NearestFilter;
     tex.needsUpdate = true;
+    const classTex = new THREE.DataTexture(new Uint8Array(256 * 4).fill(255), 256, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    classTex.magFilter = THREE.NearestFilter;
+    classTex.minFilter = THREE.NearestFilter;
+    classTex.needsUpdate = true;
     super({
       vertexShader,
       fragmentShader,
@@ -178,8 +215,24 @@ export class PointCloudMaterial extends THREE.ShaderMaterial {
         uHasIntensity: { value: true },
         uRound: { value: true },
         uOpacity: { value: 1.0 },
+        uClassTable: { value: classTex },
+        uClassFilter: { value: false },
+        uScalarRange: { value: new THREE.Vector2(0, 1) },
       },
     });
     this.visibleNodesTexture = tex;
+    this.classTexture = classTex;
+  }
+
+  /** 分類ごとの色と表示（data/pointClasses.ts の classTable）。filter は非表示の分類を消すか */
+  setClassTable(table: Uint8Array, filter: boolean) {
+    (this.classTexture.image.data as Uint8Array).set(table);
+    this.classTexture.needsUpdate = true;
+    this.uniforms.uClassFilter.value = filter;
+  }
+
+  override dispose() {
+    this.classTexture.dispose();
+    super.dispose();
   }
 }

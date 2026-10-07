@@ -254,7 +254,23 @@ h3 {
   z-index: 1;
 }
 .tabs button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  /* タブが増えても名前を折り返さない（5 つ並ぶので左右の余白を詰める） */
+  padding: 4px 2px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tabs button .badge {
+  margin-left: 3px;
+}
+.tabs button .badge:empty {
+  display: none;
+}
+.tabs .panel-close {
+  flex: none;
 }
 .tab {
   display: none;
@@ -786,6 +802,58 @@ body.tool-active .issue-pin {
 .issue-pin.other-version {
   opacity: 0.75;
   border-style: dashed;
+}
+/* 撮影ポイント（器械点）の目印。画像のある所は中を塗る */
+.scan-pin {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #4fc3f7;
+  background: rgba(15, 17, 20, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.scan-pin.has-image {
+  background: #4fc3f7;
+}
+.scan-pin:hover,
+.scan-pin:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+body.tool-active:not([data-tool="scanPoints"]) .scan-pin {
+  pointer-events: none;
+  opacity: 0.4;
+}
+body[data-tool="scanPoints"] #view canvas.gl {
+  cursor: grab;
+}
+.station-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line, #3a3f47);
+  border-radius: 4px;
+}
+.station-list li > button {
+  display: flex;
+  width: 100%;
+  gap: 6px;
+  justify-content: space-between;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.station-list li > button.active {
+  background: rgba(79, 195, 247, 0.25);
+}
+.station-list li.unplaced {
+  padding: 2px 8px;
 }
 .measure-label,
 .origin-label {
@@ -1327,4 +1395,93 @@ button.small {
 .settings-local td:first-child {
   white-space: nowrap;
   width: 8em;
+}
+
+/* ---- 処理（ジョブ）: 右パネル「処理」・左タブ「成果」 ---- */
+.job-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: var(--panel2);
+}
+.job-item .row {
+  gap: 6px;
+}
+.job-item .progress {
+  margin: 4px 0;
+}
+.job-status {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.job-status.running {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.job-status.done {
+  color: var(--good);
+  border-color: var(--good);
+}
+.job-status.failed {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.job-status.queued,
+.job-status.aborted {
+  color: var(--muted);
+}
+.err {
+  color: var(--bad);
+}
+.lbl-wide {
+  min-width: 9em;
+  color: var(--muted);
+}
+button.link {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ---- レイヤー: 行の元の見出し・処理の結果・点の属性 ---- */
+.layer-group-head {
+  margin: 10px 0 2px;
+  padding-left: 4px;
+}
+.layer-row.busy .name {
+  opacity: 0.7;
+}
+.num-input {
+  width: 6.5em;
+}
+.scalar-ramp {
+  height: 8px;
+  margin: 2px 0 6px;
+  border-radius: 3px;
+  /* material.ts の ramp と同じ色の並び（青→シアン→緑→黄→赤） */
+  background: linear-gradient(to right, rgb(48, 54, 148), rgb(41, 166, 217), rgb(77, 199, 89), rgb(250, 217, 51), rgb(219, 51, 41));
+}
+.class-list {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+.class-list .row {
+  gap: 6px;
+  margin: 1px 0;
+}
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex: none;
 }

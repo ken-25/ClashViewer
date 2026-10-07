@@ -3,7 +3,7 @@ import { dataUrl, fetchRange } from "../host";
 import type { DecodeRequest, DecodeResponse, ExtraArray, ExtraAttributeLayout, ExtraAttributeType } from "./decoder.worker";
 import DecoderWorker from "./decoder.worker?worker";
 import { MaxHeap } from "./heap";
-import { ColorMode, PointCloudMaterial, SizeMode, VN_TEX_WIDTH } from "./material";
+import { CLASS_ATTRIBUTE, ColorMode, PointCloudMaterial, SCALAR_ATTRIBUTE, SizeMode, VN_TEX_WIDTH } from "./material";
 import type { CloudSample } from "../scene/snap";
 
 // Potree 2.0 形式（metadata.json / hierarchy.bin / octree.bin）の読込と LOD 選択。
@@ -119,7 +119,7 @@ export class PotreePointCloud {
   private nextReq = 1;
   private nextWorker = 0;
   private activeLoads = 0;
-  private readonly layout: {
+  private layout: {
     bytesPerPoint: number;
     positionOffset: number;
     rgbOffset: number;
@@ -129,6 +129,10 @@ export class PotreePointCloud {
   };
   /** 追加属性として読めるもの（metadata.json から） */
   readonly attributes: PointAttributeInfo[];
+  /** 属性名 → 1 点の中の位置（バイト） */
+  private readonly attributeOffsets: Map<string, number>;
+  /** 読む属性を変えるたびに増やす（変える前に頼んだノードの結果を捨てる） */
+  private generation = 0;
   private needsUpdate = true;
   private readonly lastCam = new THREE.Matrix4();
   private readonly tmpFrustum = new THREE.Frustum();
@@ -139,6 +143,16 @@ export class PotreePointCloud {
   private readonly scratchV = new THREE.Vector3();
   clipBox: THREE.Box3 | null = null; // 表示座標。外側のノードは読まない
   onChange: (() => void) | null = null;
+  /** 分類の色・表示に使う属性（setClassAttribute） */
+  classAttribute: string | null = null;
+  /** 値の色に使う属性（setScalarAttribute） */
+  scalarAttribute: string | null = null;
+  /** 読み込んだ点に現れた分類の番号と点数（分類の属性を読んでいるときだけ数える。読み込み済みの点の延べ数） */
+  readonly classHistogram = new Map<number, number>();
+  /** 初めて現れた分類があったとき */
+  onClassesSeen: (() => void) | null = null;
+  /** 非表示の分類（クリック・スナップで拾わない）。null なら全部表示 */
+  private hiddenClasses: ReadonlySet<number> | null = null;
 
   static async load(dir: string, origin: number[], options: Partial<PointCloudOptions> = {}): Promise<PotreePointCloud> {
     const r = await fetch(dataUrl(`${dir}/metadata.json`), { cache: "no-cache" });
@@ -200,6 +214,7 @@ export class PotreePointCloud {
       .filter((a) => !builtin.has(a.name) && a.numElements === 1 && EXTRA_TYPES.includes(a.type as ExtraAttributeType))
       .map((a) => ({ name: a.name, type: a.type as ExtraAttributeType, min: a.min?.[0] ?? 0, max: a.max?.[0] ?? 0 }));
     const wanted = new Set(this.options.extraAttributes);
+    this.attributeOffsets = offsets;
     this.layout = {
       bytesPerPoint: off,
       positionOffset: offsets.get("position") ?? 0,
@@ -256,6 +271,86 @@ export class PotreePointCloud {
   }
   invalidate() {
     this.needsUpdate = true;
+  }
+
+  // ---- 追加属性（分類・値） ----
+
+  /** 今読んでいる追加属性 */
+  get extraAttributes(): string[] {
+    return this.layout.extras.map((e) => e.name);
+  }
+
+  /**
+   * 読む追加属性を変える。変わったら読み込み済みのノードを捨てて読み直す（表示は一度粗くなる）。
+   * 点群に無い名前は無視する。
+   */
+  setExtraAttributes(names: string[]) {
+    const wanted = new Set(names);
+    const next = this.attributes.filter((a) => wanted.has(a.name));
+    const same = next.length === this.layout.extras.length && next.every((a) => this.layout.extras.some((e) => e.name === a.name));
+    if (same) return;
+    this.options.extraAttributes = next.map((a) => a.name);
+    this.layout = { ...this.layout, extras: next.map((a) => ({ name: a.name, offset: this.attributeOffsets.get(a.name)!, type: a.type })) };
+    // 読込中のノードは古い並びで届くので、届いたら捨てる（generation で見分ける）
+    this.generation++;
+    for (const n of [...this.loaded]) this.unload(n);
+    this.needsUpdate = true;
+    this.onChange?.();
+  }
+
+  /** 分類に使う属性（読んでいなければ setExtraAttributes で足しておくこと）。null で使わない */
+  setClassAttribute(name: string | null) {
+    this.classAttribute = name;
+    this.classHistogram.clear();
+    for (const n of this.loaded) this.bindShaderAttributes(n);
+  }
+
+  /** 値の色に使う属性と、色の帯に割り当てる範囲 */
+  setScalarAttribute(name: string | null, range?: [number, number]) {
+    this.scalarAttribute = name;
+    if (range) this.material.uniforms.uScalarRange.value.set(range[0], range[1] > range[0] ? range[1] : range[0] + 1e-6);
+    for (const n of this.loaded) this.bindShaderAttributes(n);
+  }
+
+  /** 分類ごとの色と表示。hidden が空でなければ非表示の分類を描かず、クリックでも拾わない */
+  setClassTable(table: Uint8Array, hidden: ReadonlySet<number>) {
+    const filter = hidden.size > 0 && this.classAttribute !== null;
+    this.hiddenClasses = filter ? new Set(hidden) : null;
+    this.material.setClassTable(table, filter);
+  }
+
+  private bindShaderAttributes(node: PCNode) {
+    const g = node.points?.geometry;
+    if (!g) return;
+    const bind = (shaderName: string, attr: string | null) => {
+      const src = attr ? g.getAttribute(extraAttributeKey(attr)) : undefined;
+      if (src) g.setAttribute(shaderName, src);
+      else g.deleteAttribute(shaderName);
+    };
+    bind(CLASS_ATTRIBUTE, this.classAttribute);
+    bind(SCALAR_ATTRIBUTE, this.scalarAttribute);
+    if (this.classAttribute) {
+      const arr = g.getAttribute(extraAttributeKey(this.classAttribute))?.array as ArrayLike<number> | undefined;
+      if (!arr) return;
+      let added = false;
+      for (let i = 0; i < arr.length; i++) {
+        const c = arr[i];
+        const prev = this.classHistogram.get(c);
+        if (prev === undefined) added = true;
+        this.classHistogram.set(c, (prev ?? 0) + 1);
+      }
+      if (added) this.onClassesSeen?.();
+    }
+  }
+
+  /** i 番目の点が非表示の分類か（クリック・スナップ用） */
+  private hiddenAt(cls: ArrayLike<number> | null, i: number): boolean {
+    return !!cls && this.hiddenClasses!.has(cls[i]);
+  }
+
+  private classArray(pts: THREE.Points): ArrayLike<number> | null {
+    if (!this.hiddenClasses) return null;
+    return (pts.geometry.getAttribute(CLASS_ATTRIBUTE)?.array as ArrayLike<number> | undefined) ?? null;
   }
 
   // ---- 階層 ----
@@ -328,6 +423,7 @@ export class PotreePointCloud {
     if (node.loading || node.loaded || node.failed) return;
     node.loading = true;
     this.activeLoads++;
+    const gen = this.generation;
     try {
       if (node.nodeType === NodeType.Proxy) await this.loadHierarchy(node);
       if (node.numPoints === 0 || node.byteSize === 0) {
@@ -352,6 +448,8 @@ export class PotreePointCloud {
         w.postMessage(req);
       });
       if (res.error) throw new Error(res.error);
+      // 頼んだ後に読む属性が変わった。捨てて次の update で読み直す
+      if (gen !== this.generation) return;
       this.attach(node, res.position, res.color, res.intensity, res.extras);
     } catch (e) {
       node.failed = true;
@@ -390,6 +488,7 @@ export class PotreePointCloud {
     this.group.add(pts);
     this.loaded.add(node);
     this.loadedPoints += position.length / 3;
+    this.bindShaderAttributes(node);
   }
 
   private unload(node: PCNode) {
@@ -546,10 +645,12 @@ export class PotreePointCloud {
       const dist = ray.ray.distanceToPoint(node.sphere.center);
       if (dist > node.sphere.radius * 1.05 + 0.5) continue;
       const pos = pts.geometry.getAttribute("position").array as Float32Array;
+      const cls = this.classArray(pts);
       const ox = node.box.min.x;
       const oy = node.box.min.y;
       const oz = node.box.min.z;
       for (let i = 0; i < pos.length; i += 3) {
+        if (cls && this.hiddenAt(cls, i / 3)) continue;
         const x = pos[i] + ox;
         const y = pos[i + 1] + oy;
         const z = pos[i + 2] + oz;
@@ -613,10 +714,12 @@ export class PotreePointCloud {
       const slack = (tanPx * (along + node.sphere.radius) + orthoPx) * radiusPx;
       if (ray.ray.distanceToPoint(node.sphere.center) > node.sphere.radius * 1.05 + 0.5 + slack) continue;
       const arr = pts.geometry.getAttribute("position").array as Float32Array;
+      const cls = this.classArray(pts);
       const ox = node.box.min.x;
       const oy = node.box.min.y;
       const oz = node.box.min.z;
       for (let i = 0; i < arr.length; i += 3) {
+        if (cls && this.hiddenAt(cls, i / 3)) continue;
         const x = arr[i] + ox;
         const y = arr[i + 1] + oy;
         const z = arr[i + 2] + oz;

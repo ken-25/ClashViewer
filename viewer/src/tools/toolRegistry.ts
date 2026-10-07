@@ -8,7 +8,7 @@
 //
 // このファイルは型だけに依存させる（App ⇄ 定義 ⇄ パネルの循環 import を作らないため）。
 
-import type { App } from "../app";
+import type { App, AppTopic } from "../app";
 import type { Pick } from "../scene/picker";
 
 export type ToolId = string;
@@ -49,6 +49,14 @@ export interface ToolDefinition {
   onKey?(app: App, e: KeyboardEvent): boolean;
   /** 右パネル（#tool-opts）を描く。head は見出しと終わるボタン */
   renderPanel?(app: App, el: HTMLElement, head: HTMLElement): void;
+  /**
+   * このツールの右パネルを更新するきっかけ（ツールを使っている間だけ）。
+   * refreshPanel があればそれを呼び（入力中の欄を作り直さずに一部だけ更新する）、無ければ renderPanel で描き直す
+   */
+  panelTopics?: AppTopic[];
+  refreshPanel?(app: App, el: HTMLElement): void;
+  /** ツールバーに出すか（使える処理が無いときなど）。無ければいつも出す。panelTopics・"tool" のたびに見直す */
+  available?(app: App): boolean;
 }
 
 const tools = new Map<ToolId, ToolDefinition>();
@@ -66,6 +74,11 @@ export function getTool(id: ToolId): ToolDefinition {
 
 export function hasTool(id: ToolId): boolean {
   return tools.has(id);
+}
+
+/** 登録されたすべてのツール */
+export function allTools(): ToolDefinition[] {
+  return [...tools.values()];
 }
 
 /** ツールバーに出すツール（並び順） */

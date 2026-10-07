@@ -8,15 +8,17 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 let reg;
+let layers;
 const out = mkdtempSync(join(tmpdir(), "kasane-test-"));
 
 before(async () => {
   await build({
     logLevel: "silent",
     configFile: false,
-    build: { outDir: out, emptyOutDir: true, minify: false, lib: { entry: { reg: "src/ui/panelRegistry.ts" }, formats: ["es"] } },
+    build: { outDir: out, emptyOutDir: true, minify: false, lib: { entry: { reg: "src/ui/panelRegistry.ts", layers: "src/ui/layerRegistry.ts" }, formats: ["es"] } },
   });
   reg = await import(pathToFileURL(join(out, "reg.js")));
+  layers = await import(pathToFileURL(join(out, "layers.js")));
   process.on("exit", () => rmSync(out, { recursive: true, force: true }));
 });
 
@@ -35,4 +37,11 @@ test("registerViewBarItem: order 順・二重登録と、menu も onClick も無
   assert.deepEqual(reg.viewBarItems().map((t) => t.id), ["v1", "v2"]);
   assert.throws(() => reg.registerViewBarItem({ id: "v1", order: 0, label: "x", title: "", onClick: () => {} }));
   assert.throws(() => reg.registerViewBarItem({ id: "v3", order: 0, label: "x", title: "" }));
+});
+
+test("registerLayerSource: order 順・二重登録の拒否", () => {
+  layers.registerLayerSource({ id: "derived", order: 100, rows: () => [] });
+  layers.registerLayerSource({ id: "pc", order: 0, rows: () => [] });
+  assert.deepEqual(layers.layerSources().map((s) => s.id), ["pc", "derived"]);
+  assert.throws(() => layers.registerLayerSource({ id: "pc", order: 1, rows: () => [] }));
 });

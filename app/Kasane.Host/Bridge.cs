@@ -340,6 +340,7 @@ public sealed class Bridge
     private JsonObject SaveStorage(string? dataRoot, string? configRoot, bool copyConfig)
     {
         if (_imports.AnyActive) throw new InvalidOperationException("取込中は保存先を変えられません。取込が終わってから操作してください。");
+        if (_jobs.AnyActive) throw new InvalidOperationException("処理の実行中は保存先を変えられません。処理が終わってから操作してください。");
         if (string.IsNullOrWhiteSpace(dataRoot)) dataRoot = null;
         if (string.IsNullOrWhiteSpace(configRoot)) configRoot = null;
 

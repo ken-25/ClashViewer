@@ -302,6 +302,60 @@ export class Viewer3D {
   /** 画面に触れている指（2 本目が来たら回転をやめて OrbitControls の移動に任せる） */
   private readonly touches = new Set<number>();
 
+  // ---- その場で見回す（撮影ポイント。features/scanPoints.ts） ----
+
+  private _lookAround = false;
+
+  /** その場で見回す操作か（左ドラッグ＝向きだけ変える・ホイール＝画角・平行移動なし） */
+  get lookAround(): boolean {
+    return this._lookAround;
+  }
+
+  /**
+   * その場で見回す操作に切り替える。カメラの位置は動かさず、左ドラッグで向きだけ、ホイールで画角を変える。
+   * 平行移動（右・中ドラッグ）は止める（撮影ポイントから離れないように）。
+   */
+  setLookAround(on: boolean) {
+    if (on === this._lookAround) return;
+    this._lookAround = on;
+    this.controls.enablePan = !on;
+    this.cancelOrbit();
+    this.zoomPivot = null;
+  }
+
+  /**
+   * 撮影ポイントに立って、水平な向き forward を見る。注視点は 1 m 先（近クリップ面を小さく保つ）。
+   */
+  standAt(position: THREE.Vector3, forward: THREE.Vector3) {
+    const f = forward.clone();
+    if (f.lengthSq() < 1e-12) f.set(1, 0, 0);
+    f.normalize();
+    this.camera.position.copy(position);
+    this.controls.target.copy(position).add(f);
+    this.camera.lookAt(this.controls.target);
+    this.cameraMoved();
+  }
+
+  /** 見回す: 画面の上を掴んで動かす向き（右へ動かすと左を向く）。量は画角に合わせて、景色がカーソルに付いて動く */
+  private lookRotate(dx: number, dy: number) {
+    const cam = this.camera;
+    const h = this.canvas.clientHeight || 1;
+    const k = THREE.MathUtils.degToRad(this.fov) / h;
+    const fwd = cam.getWorldDirection(new THREE.Vector3());
+    const az = Math.atan2(fwd.y, fwd.x) + dx * k;
+    const lim = THREE.MathUtils.degToRad(89);
+    const el = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(fwd.z, -1, 1)) + dy * k, -lim, lim);
+    const dist = Math.max(this.controls.target.distanceTo(cam.position), 0.2);
+    const next = new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el));
+    this.controls.target.copy(cam.position).addScaledVector(next, dist);
+    cam.lookAt(this.controls.target);
+    this.controls.update();
+    this.requestRender();
+  }
+
+  /** 見回すときの画角の範囲（度） */
+  static readonly LOOK_FOV: [number, number] = [15, 100];
+
   private onOrbitDown(e: PointerEvent) {
     if (e.pointerType === "touch") {
       this.touches.add(e.pointerId);
@@ -311,6 +365,11 @@ export class Viewer3D {
       }
     }
     if (!this.controls.enabled || e.button !== 0 || this.orbit) return;
+    if (this._lookAround) {
+      // 中心は自分（カーソル下を探さない）
+      this.orbit = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, pivot: this.camera.position.clone(), pendingX: 0, pendingY: 0, released: false, cancelled: false };
+      return;
+    }
     // 左ボタン＋Ctrl/Shift は OrbitControls が移動として扱う（タッチは修飾キーを見ない）
     if (e.pointerType !== "touch" && (e.ctrlKey || e.metaKey || e.shiftKey)) return;
     const orbit: OrbitDrag = {
@@ -351,7 +410,9 @@ export class Viewer3D {
     o.x = e.clientX;
     o.y = e.clientY;
     if (dx === 0 && dy === 0) return;
-    if (o.pivot) {
+    if (o.pivot && this._lookAround) {
+      this.lookRotate(dx, dy);
+    } else if (o.pivot) {
       this.rotateAround(o.pivot, dx, dy);
     } else {
       o.pendingX += dx;
@@ -425,6 +486,13 @@ export class Viewer3D {
     // 奥へ回す（deltaY < 0）と寄る、手前へ回すと離れる
     const steps = THREE.MathUtils.clamp(-e.deltaY / unit, -5, 5);
     if (steps === 0) return;
+    if (this._lookAround) {
+      // その場で見回すときは、動かずに画角で寄る・離れる
+      const [lo, hi] = Viewer3D.LOOK_FOV;
+      this.fov = THREE.MathUtils.clamp(this.fov * Math.pow(0.9, steps), lo, hi);
+      this.controls.dispatchEvent({ type: "end" });
+      return;
+    }
     this.zoomSteps += steps;
     this.zoomCursor = { x: e.clientX, y: e.clientY };
     void this.flushZoom();

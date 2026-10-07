@@ -35,6 +35,25 @@ public sealed class DatasetStore
         return arr;
     }
 
+    /// <summary>公開済みの版の manifest（folder 付き）。無い・公開前なら例外</summary>
+    public JsonObject Read(string folder)
+    {
+        var mf = Path.Combine(FolderPath(folder), "manifest.json");
+        if (!File.Exists(mf)) throw new DirectoryNotFoundException($"版が見つかりません: {folder}");
+        var obj = JsonUtil.ReadFile(mf) as JsonObject ?? throw new InvalidDataException("manifest が壊れています");
+        if (obj["state"]?.GetValue<string>() != "ready") throw new InvalidOperationException($"公開前の版です: {folder}");
+        obj["folder"] = folder;
+        return obj;
+    }
+
+    /// <summary>同じプロジェクト（site）の版のうち最大の版番号（無ければ 0）</summary>
+    public int MaxVersion(string site) =>
+        List().OfType<JsonObject>()
+            .Where(m => (m["site"]?.GetValue<string>() ?? m["id"]?.GetValue<string>()) == site)
+            .Select(m => m["version"]?.GetValue<int>() ?? 0)
+            .DefaultIfEmpty(0)
+            .Max();
+
     public string FolderPath(string folder)
     {
         if (folder.StartsWith('.') || folder.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)

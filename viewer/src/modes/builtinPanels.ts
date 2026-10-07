@@ -8,7 +8,8 @@ import { h } from "../ui/dom";
 import { IssuePanel } from "../ui/issuePanel";
 import { registerLeftTab, registerViewBarItem } from "../ui/panelRegistry";
 import { renderMeasureList } from "../ui/toolPanels";
-import { renderLayers, renderNavMenu } from "../ui/viewPanels";
+import { registerLayerSource } from "../ui/layerRegistry";
+import { modelRows, pointCloudRows, renderLayers, renderNavMenu } from "../ui/viewPanels";
 
 // ---- 左タブ: 対象（レイヤー）と成果（計測・指摘・差分） ----
 
@@ -16,8 +17,25 @@ registerLeftTab({
   id: "layers",
   label: "レイヤー",
   order: 0,
-  topics: ["dataset", "display", "diff"],
+  // derived: 処理の結果の行（modes/builtinJobs.ts の行の元）
+  // scans: 撮影ポイントの行（modes/scanPointsTool.ts）
+  topics: ["dataset", "display", "diff", "derived", "scans"],
   setup: (app) => () => renderLayers(app),
+});
+
+// レイヤーの行の元（点群・モデル）。処理の結果の行は modes/builtinJobs.ts
+registerLayerSource({
+  id: "pointcloud",
+  order: 0,
+  rows: pointCloudRows,
+  empty: () => "点群はありません。",
+});
+
+registerLayerSource({
+  id: "models",
+  order: 10,
+  rows: modelRows,
+  empty: () => "モデルはありません。",
 });
 
 registerLeftTab({

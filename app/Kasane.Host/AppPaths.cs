@@ -40,7 +40,8 @@ public sealed class AppPaths
     /// <summary>PC ごとの設定（保存先の場所など）。保存先の外に置く（場所を変えても読めるように）。</summary>
     public static string SettingsFile => Path.Combine(Local, "settings.json");
     public string WebViewData => Path.Combine(Local, "WebView2");
-    public string Work => Path.Combine(Local, "work");
+    /// <summary>変換・処理の作業用（PC ローカル）。テストでは一時フォルダに差し替える。</summary>
+    public string Work { get; init; } = Path.Combine(Local, "work");
     public string Logs => Path.Combine(Local, "logs");
 
     public AppPaths(string app, string root, string? config = null, string rootSource = "default", string configSource = "default")

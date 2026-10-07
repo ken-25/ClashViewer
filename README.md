@@ -104,6 +104,7 @@ Vite の出力先は環境変数 `KASANE_OUT_DIR`（未指定なら `viewer/dist
 | 変換エンジン: 実行 | `uv run --project converter kasane-converter ...` |
 | 変換エンジン: テスト | `uv run --project converter pytest` |
 | exe: ビルド | `dotnet build app/Kasane.Host/Kasane.Host.csproj -c Release` |
+| exe: 単体テスト（JobService の待ち行列・結果の公開） | `dotnet test app/Kasane.Host.Tests` |
 
 変換エンジンの CLI 引数は [converter/README.md](converter/README.md) を参照。
 
@@ -118,7 +119,8 @@ node e2e/smoke.mjs                             # Range・書込権限
 node e2e/import.mjs                            # 取込
 node e2e/features.mjs <最新版フォルダ> <前の版フォルダ>   # 全機能（2 人分・版またぎ）
 node e2e/perf.mjs <データセットのフォルダ>              # 性能（--root <データフォルダ> を指定可）
-node e2e/jobs.mjs <点群のある版のフォルダ>              # 処理（ジョブ）基盤（derived に 1 件増える）
+node e2e/jobs.mjs <点群のある版のフォルダ>              # 処理（ジョブ）基盤・画面・分類の表示（derived が 4 件・版が 1 つ増える）
+node e2e/panels.mjs <差分のある版フォルダ>              # 左タブ・見え方・機能の後始末
 ```
 
 ## 実行

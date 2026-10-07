@@ -257,7 +257,7 @@ export class ImportJob {
       );
       t.fraction = 1;
       t.status = "done";
-      t.message = `${r.points.toLocaleString()} 点・${r.scanCount} スキャン`;
+      t.message = `${r.points.toLocaleString()} 点・${r.scanCount} スキャン${r.imageCount ? `・画像 ${r.imageCount} 枚` : ""}`;
       this.emit();
       return {
         owner: folder,
@@ -268,6 +268,7 @@ export class ImportJob {
         bounds: r.bounds,
         outputSizes: r.outputSizes,
         timings: r.timings,
+        imageCount: r.imageCount ?? 0,
       };
     } finally {
       off();
@@ -424,6 +425,13 @@ export function carryList(plan: ImportPlan): {
   if (pc) {
     for (const n of ["metadata.json", "hierarchy.bin", "octree.bin"]) files.push({ folder: pc.owner, rel: `${pc.dir}/${n}` });
     bytes += Object.values(pc.outputSizes ?? {}).reduce((a, b) => a + b, 0) || pc.points * 27;
+    // 撮影ポイントの画像も引き継ぐ（sources をそのまま使うので、同じ相対パスへ複製する）
+    for (const src of pc.sources)
+      for (const img of src.images ?? [])
+        if (img?.file) {
+          files.push({ folder: pc.owner, rel: img.file });
+          bytes += img.bytes ?? 0;
+        }
   }
   const newKeys = new Set(plan.files.filter((f) => f.kind === "ifc").map((f) => plan.keys[f.token] ?? safeKey(f.name)));
   const models = base.models.filter((m) => plan.keepModels.includes(m.key) && !newKeys.has(m.key));

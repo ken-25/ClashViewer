@@ -60,6 +60,8 @@ def e57_to_las(src: Path, dst: Path, stage_id: str, done_before: int, total: int
         with laspy.open(str(dst), mode="w", header=header) as w:
             for s in r.scans:
                 valid_points = 0
+                smin = np.full(3, np.inf)
+                smax = np.full(3, -np.inf)
                 for chunk, stored in r.iter_scan(s.index):
                     n = chunk.xyz.shape[0]
                     if n:
@@ -77,8 +79,12 @@ def e57_to_las(src: Path, dst: Path, stage_id: str, done_before: int, total: int
                             rec.red = rec.green = rec.blue = np.full(n, 40000, np.uint16)
                         rec.point_source_id = np.full(n, min(s.index, 65535), np.uint16)
                         w.write_points(rec)
-                        bmin = np.minimum(bmin, chunk.xyz.min(axis=0))
-                        bmax = np.maximum(bmax, chunk.xyz.max(axis=0))
+                        cmin = chunk.xyz.min(axis=0)
+                        cmax = chunk.xyz.max(axis=0)
+                        bmin = np.minimum(bmin, cmin)
+                        bmax = np.maximum(bmax, cmax)
+                        smin = np.minimum(smin, cmin)
+                        smax = np.maximum(smax, cmax)
                         valid_points += n
                     done += stored
                     progress.progress(stage_id, done, total, f"{src.name} / {s.name}")
@@ -93,6 +99,8 @@ def e57_to_las(src: Path, dst: Path, stage_id: str, done_before: int, total: int
                         "hasColor": s.has_color,
                         "hasIntensity": s.has_intensity,
                         "pose": {"rotation": s.rotation, "translation": s.translation},
+                        # スキャンの範囲（共通座標）。撮影ポイント（器械点）の位置が本物かの判定に使う
+                        "bounds": {"min": smin.tolist(), "max": smax.tolist()} if valid_points else None,
                     }
                 )
                 stats["points"] += valid_points
@@ -104,6 +112,75 @@ def e57_to_las(src: Path, dst: Path, stage_id: str, done_before: int, total: int
         raise ValueError(f"{src.name} に有効な点がありません")
     stats["bounds"] = {"min": bmin.tolist(), "max": bmax.tolist()}
     return stats
+
+
+#: 画像を書き出したときの、データセットのフォルダからの相対パスの先頭（ホストが images/ へ写す）
+IMAGES_REL = "images"
+
+
+def image_entry(img, file_rel: str | None) -> dict:
+    """manifest の sources[].images[] の 1 件（画面の data/scanPoints.ts の ScanImage と同じ形）。"""
+    e: dict = {
+        "index": img.index,
+        "name": img.name,
+        "guid": img.guid,
+        "scanGuid": img.scan_guid,
+        "kind": img.kind,
+        "format": img.format,
+        "bytes": img.byte_count,
+        "width": img.width,
+        "height": img.height,
+        "pixelWidth": img.pixel_width,
+        "pixelHeight": img.pixel_height,
+        "pose": {"rotation": img.rotation, "translation": img.translation} if img.has_pose else None,
+        "file": file_rel,
+    }
+    if img.focal_length is not None:
+        e["focalLength"] = img.focal_length
+        e["principalPoint"] = img.principal_point
+    if img.radius is not None:
+        e["radius"] = img.radius
+        e["principalY"] = img.principal_y
+    return e
+
+
+def extract_images(paths: list[Path], sources: list[dict], images_dir: Path | None, stage_id: str) -> int:
+    """
+    各 E57 の images2D を images_dir へ書き出し、sources[i]["images"] に記録する。
+    images_dir が無ければ記録だけ（file は null）。戻り値は書いた画像の数。
+    """
+    infos = []
+    for p in paths:
+        with E57Reader(str(p)) as r:
+            infos.append((r.images, r.image_errors))
+    total = sum(img.byte_count for imgs, _ in infos for img in imgs) or 1
+    done = 0
+    written = 0
+    if images_dir is not None:
+        images_dir.mkdir(parents=True, exist_ok=True)
+    for i, (p, src) in enumerate(zip(paths, sources)):
+        imgs, errors = infos[i]
+        for msg in errors:
+            progress.log("warn", f"{p.name}: {msg}（この画像は使いません）")
+        entries = []
+        if imgs and images_dir is not None:
+            with E57Reader(str(p)) as r:
+                for img in imgs:
+                    name = f"{i:02d}_{img.index:04d}.{'jpg' if img.format == 'jpeg' else 'png'}"
+                    try:
+                        r.write_image(img, str(images_dir / name))
+                        entries.append(image_entry(img, f"{IMAGES_REL}/{name}"))
+                        written += 1
+                    except Exception as e:  # 1 枚読めなくても点群の取込は続ける
+                        progress.log("warn", f"{p.name} / {img.name}: 画像を書き出せません（{e}）")
+                        entries.append(image_entry(img, None))
+                    done += img.byte_count
+                    progress.progress(stage_id, done, total, f"{p.name} / {img.name}")
+        else:
+            entries = [image_entry(img, None) for img in imgs]
+        src["images"] = entries
+    progress.progress(stage_id, total, total, force=True)
+    return written
 
 
 def cmd_e57(args: argparse.Namespace) -> int:
@@ -138,7 +215,7 @@ def cmd_e57(args: argparse.Namespace) -> int:
             done += size
         progress.progress("hash", 1, 1, force=True)
 
-        progress.stage("read", "E57 の読込と LAS 変換", 0.52)
+        progress.stage("read", "E57 の読込と LAS 変換", 0.50)
         with_counts = []
         total_stored = 0
         for p in inputs:
@@ -160,6 +237,11 @@ def cmd_e57(args: argparse.Namespace) -> int:
             bmax = np.maximum(bmax, st["bounds"]["max"])
             total_points += st["points"]
         progress.progress("read", total_stored, total_stored, force=True)
+
+        # 撮影ポイントの画像（360 画像・写真）。無いファイルでは何もしない
+        progress.stage("images", "撮影ポイントの画像の書き出し", 0.02)
+        images_dir = Path(args.images) if args.images else None
+        image_count = extract_images(inputs, sources, images_dir, "images")
         t_read = time.monotonic()
 
         progress.stage("lod", "点群の LOD 化（PotreeConverter）", 0.40)
@@ -177,6 +259,7 @@ def cmd_e57(args: argparse.Namespace) -> int:
             sources=sources,
             points=int(total_points),
             scanCount=sum(len(s["scans"]) for s in sources),
+            imageCount=image_count,
             bounds={"min": bmin.tolist(), "max": bmax.tolist()},
             outputSizes=out_sizes,
             timings={
@@ -210,6 +293,7 @@ def cmd_info(args: argparse.Namespace) -> int:
                             {"name": s.name, "points": s.point_count, "fields": s.fields, "translation": s.translation}
                             for s in r.scans
                         ],
+                        "images": [image_entry(img, None) for img in r.images],
                     }
                 )
         progress.emit("result", kind="info", files=out)
@@ -235,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--potree")
     e.add_argument("--work")
     e.add_argument("--keep-work", action="store_true")
+    # 撮影ポイントの画像（images2D）の書き出し先。無ければ画像の記録だけ残す
+    e.add_argument("--images")
     e.set_defaults(func=cmd_e57)
     i = sub.add_parser("info", help="E57 の概要を出す")
     i.add_argument("--input", action="append", required=True)

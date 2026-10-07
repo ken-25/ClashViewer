@@ -20,6 +20,9 @@ public sealed class ImportService
     private readonly string _user;
     private readonly ConcurrentDictionary<string, Session> _sessions = new();
 
+    /// <summary>撮影ポイントの画像を置くフォルダ（データセットのフォルダからの相対。manifest の sources[].images[].file と同じ先頭）</summary>
+    public const string ImagesDir = "images";
+
     public event Action<JsonObject>? Progress;
 
     public ImportService(AppPaths paths, string user)
@@ -89,7 +92,9 @@ public sealed class ImportService
             args.Add("--input");
             args.Add(i);
         }
-        args.AddRange(new[] { "--out", outLocal, "--potree", potree, "--work", Path.Combine(s.Work, "tmp") });
+        // 撮影ポイントの画像（E57 の images2D）は PC ローカルに書かせ、点群の後で images/ へ写す
+        var imagesLocal = Path.Combine(s.Work, "images");
+        args.AddRange(new[] { "--out", outLocal, "--potree", potree, "--work", Path.Combine(s.Work, "tmp"), "--images", imagesLocal });
         JsonObject result;
         try
         {
@@ -127,6 +132,11 @@ public sealed class ImportService
         }
         Emit(id, "pointcloud", new JsonObject { ["event"] = "progress", ["stage"] = "copy", ["done"] = total, ["total"] = total });
         TryDelete(outLocal);
+        if (Directory.Exists(imagesLocal) && Directory.EnumerateFiles(imagesLocal).Any())
+        {
+            await StageDirectory(id, imagesLocal, ImagesDir, o => Emit(id, "pointcloud", o));
+            TryDelete(imagesLocal);
+        }
         result.Remove("event");
         return result;
     }
@@ -135,9 +145,15 @@ public sealed class ImportService
     /// 前の版のファイルを作業用データセットへ複製する（引き継ぎ）。版どうしでファイルを共有しないので、古い版を消しても新しい版は壊れない。
     /// files は「元のデータセットのフォルダ名」と「その中の相対パス」の組。複製先は同じ相対パス。
     /// </summary>
-    public async Task<JsonObject> CopyFromDatasets(string id, IReadOnlyList<(string Folder, string Rel)> files, string task)
+    public async Task<JsonObject> CopyFromDatasets(string id, IReadOnlyList<(string Folder, string Rel)> files, string task, Action<JsonObject>? onEvent = null)
     {
         var s = Get(id);
+        // 処理（ジョブ）から呼ぶときは、進捗をジョブの通知として流す
+        void Emit(string _, string t, JsonObject evt)
+        {
+            if (onEvent is not null) onEvent(evt);
+            else this.Emit(id, t, evt);
+        }
         var pairs = new List<(string Src, string Dst, string Rel)>();
         foreach (var (folder, rel) in files)
         {
@@ -180,10 +196,72 @@ public sealed class ImportService
         return new JsonObject { ["files"] = pairs.Count, ["bytes"] = total };
     }
 
-    public JsonObject Finish(string id, JsonObject manifest)
+    /// <summary>作業用データセットの公開先のフォルダ名（datasets/ 直下の名前）</summary>
+    public string FolderOf(string id) => Get(id).Folder;
+
+    /// <summary>
+    /// PC ローカルにできたフォルダ（処理の結果など）を作業用データセットの destRel の下へ写す。
+    /// 戻り値は写したファイルの大きさ（destRel からの相対パス → バイト数）。
+    /// </summary>
+    public async Task<Dictionary<string, long>> StageDirectory(string id, string srcDir, string destRel, Action<JsonObject>? onEvent = null)
+    {
+        var s = Get(id);
+        var dest = Path.GetFullPath(Path.Combine(s.Dir, destRel.Replace('/', Path.DirectorySeparatorChar)));
+        if (!dest.StartsWith(s.Dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException($"使えないパスです: {destRel}");
+        var files = Directory.EnumerateFiles(srcDir, "*", SearchOption.AllDirectories).ToList();
+        long total = files.Sum(f => new FileInfo(f).Length), done = 0;
+        var sizes = new Dictionary<string, long>();
+        onEvent?.Invoke(new JsonObject { ["event"] = "stage", ["stage"] = "copy", ["label"] = "データフォルダへ書き込み", ["weight"] = 0.0 });
+        var buf = new byte[4 << 20];
+        var sw = Stopwatch.StartNew();
+        foreach (var src in files)
+        {
+            var rel = Path.GetRelativePath(srcDir, src);
+            var dst = Path.Combine(dest, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            await using (var fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan))
+            await using (var fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            {
+                int n;
+                while ((n = await fi.ReadAsync(buf)) > 0)
+                {
+                    if (s.Aborted) throw new OperationCanceledException("中断しました");
+                    await fo.WriteAsync(buf.AsMemory(0, n));
+                    done += n;
+                    if (sw.ElapsedMilliseconds > 250)
+                    {
+                        sw.Restart();
+                        onEvent?.Invoke(new JsonObject { ["event"] = "progress", ["stage"] = "copy", ["done"] = done, ["total"] = total });
+                    }
+                }
+            }
+            sizes[rel.Replace('\\', '/')] = new FileInfo(dst).Length;
+        }
+        onEvent?.Invoke(new JsonObject { ["event"] = "progress", ["stage"] = "copy", ["done"] = total, ["total"] = total });
+        return sizes;
+    }
+
+    /// <summary>作業用データセットへ JSON を書く（diff.json など）</summary>
+    public void WriteJson(string id, string rel, JsonNode node)
+    {
+        var s = Get(id);
+        var path = Path.GetFullPath(Path.Combine(s.Dir, rel.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(s.Dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException($"使えないパスです: {rel}");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        JsonUtil.WriteFileAtomic(path, node);
+    }
+
+    /// <summary>
+    /// 公開する。parent は既存の版から処理で作った版のときだけ（JobService が渡す）。
+    /// 画面からの取込（RPC importFinish）は parent を渡さないので、画面が parent を偽って書くことはできない。
+    /// </summary>
+    public JsonObject Finish(string id, JsonObject manifest, JsonObject? parent = null)
     {
         var s = Get(id);
         manifest["schema"] = Manifest.Schema;
+        manifest["parent"] = parent?.DeepClone();
         Manifest.EnsureDefaults(manifest);
         manifest["id"] = id;
         manifest["createdBy"] = _user;

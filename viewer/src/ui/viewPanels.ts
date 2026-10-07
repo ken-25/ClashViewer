@@ -9,6 +9,7 @@ import { MIN_BOX_SIZE } from "../tools/clipBoxEdit";
 import type { Section } from "../tools/clipping";
 import { fmtM } from "../tools/measure";
 import { $, h, mount } from "./dom";
+import { layerSources, type LayerRow } from "./layerRegistry";
 import { rangeSlider } from "./rangeSlider";
 
 const BUDGETS = [500_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 10_000_000, 20_000_000];
@@ -32,29 +33,11 @@ const storeyCount = (lm: LoadedModel) => lm.storeys.filter((s) => s.key !== NO_S
 /** 開いている行（作り直しても開いたままにする） */
 const expanded = new Set<string>(["pc", "models"]);
 
-interface RowSpec {
-  key: string; // 開閉とフォーカスを戻すための識別子
-  level: number;
-  label: string;
-  count?: string;
-  /** 表示中か。null なら表示ボタンを出さない */
-  shown: boolean | null;
-  /** 親（モデル・階）が隠れているので、この行も見えていない */
-  dimmed?: boolean;
-  ghost: boolean | null;
-  onShow?: (on: boolean) => void;
-  onGhost?: (on: boolean) => void;
-  onMove?: () => void;
-  moveTitle?: string;
-  /** 開くと出る中身。無ければ開閉の三角を出さない */
-  body?: () => (Node | null)[];
-}
-
 /**
- * レイヤーの 1 行。点群・モデル・階・クラスを同じ形にそろえる:
+ * レイヤーの 1 行。点群・モデル・階・クラス・処理の結果を同じ形にそろえる:
  * [開閉] 名前 件数 [表示] [半透明] [移動]
  */
-function layerRow(app: App, r: RowSpec): HTMLElement {
+export function layerRow(app: App, r: LayerRow): HTMLElement {
   const open = !!r.body && expanded.has(r.key);
   const toggle = r.body
     ? h("button", { class: "twisty", "aria-expanded": String(open), "aria-label": `${r.label} を${open ? "閉じる" : "開く"}`, "data-focus": `${r.key}:twisty`,
@@ -67,11 +50,11 @@ function layerRow(app: App, r: RowSpec): HTMLElement {
           onclick: () => act(!on) }, icon(ico));
   const row = h(
     "div",
-    { class: `layer-row lv${r.level}${r.shown === false || r.dimmed ? " off" : ""}`, role: "treeitem", "aria-level": String(r.level + 1), "aria-expanded": r.body ? String(open) : undefined },
+    { class: `layer-row lv${r.level}${r.shown === false || r.dimmed ? " off" : ""}${r.busy ? " busy" : ""}`, role: "treeitem", "aria-level": String(r.level + 1), "aria-expanded": r.body ? String(open) : undefined, "aria-busy": r.busy ? "true" : undefined },
     toggle,
-    h("span", { class: "name", title: r.label }, r.label),
+    h("span", { class: "name", title: r.title ? `${r.label}\n${r.title}` : r.label }, r.label),
     r.count ? h("span", { class: "count" }, r.count) : null,
-    btn("show", r.shown, r.shown === false ? "eyeOff" : "eye", r.shown === false ? "表示する" : "隠す", r.onShow),
+    btn("show", r.shown, r.shown === false ? "eyeOff" : "eye", r.shown === false ? "表示する" : "隠す", r.busy ? undefined : r.onShow),
     btn("ghost", r.ghost, "ghost", r.ghost ? "半透明をやめる" : "半透明にする", r.onGhost),
     r.onMove ? h("button", { class: "ico-btn", title: r.moveTitle ?? "全体が見える所へ移動", "aria-label": `${r.label}: ${r.moveTitle ?? "移動"}`, "data-focus": `${r.key}:move`, onclick: r.onMove }, icon("move")) : h("span", { class: "ico-btn placeholder" }),
   );
@@ -79,14 +62,57 @@ function layerRow(app: App, r: RowSpec): HTMLElement {
   return h("div", { class: "layer-node", role: "group" }, row, h("div", { class: `layer-body lv${r.level}` }, r.body!()));
 }
 
+/** 色分けの方法の下に出す設定（値: 属性と範囲 / 分類: 分類ごとの表示） */
+function attributeBody(app: App): (Node | null)[] {
+  const pa = app.pointAttrs;
+  const mode = pa.colorMode;
+  const out: (Node | null)[] = [];
+  if (mode === ColorMode.Scalar) {
+    const num = (v: number) => (Math.abs(v) >= 1000 || Number.isInteger(v) ? String(Math.round(v * 1000) / 1000) : v.toPrecision(4));
+    const lo = h("input", { type: "number", class: "num-input", step: "any", value: num(pa.scalarRange[0]), "aria-label": "色の帯の下限" });
+    const hi = h("input", { type: "number", class: "num-input", step: "any", value: num(pa.scalarRange[1]), "aria-label": "色の帯の上限" });
+    const setRange = () => pa.setScalarRange(Number(lo.value), Number(hi.value));
+    lo.addEventListener("change", setRange);
+    hi.addEventListener("change", setRange);
+    out.push(
+      h("div", { class: "row" }, h("label", null, "属性"), h("select", { class: "grow", "aria-label": "色分けに使う属性", onchange: (e: Event) => pa.setScalar((e.target as HTMLSelectElement).value) },
+        pa.scalarCandidates.map((a) => h("option", { value: a.name, selected: a.name === pa.scalar }, a.name)))),
+      h("div", { class: "row small" }, h("label", null, "範囲"), lo, h("span", null, "〜"), hi,
+        h("button", { class: "small", title: "属性の最小・最大に戻す", onclick: () => { pa.resetScalarRange(); pa.setScalarRange(...pa.scalarRange); } }, "リセット")),
+      h("div", { class: "scalar-ramp", "aria-hidden": "true" }),
+    );
+  }
+  if (pa.hasClasses && (mode === ColorMode.Classification || pa.hidden.size > 0)) {
+    const rows = pa.classes();
+    out.push(
+      h("div", { class: "row small" }, h("span", { class: "grow muted" }, mode === ColorMode.Classification ? "分類" : "分類（隠している分類があります）"),
+        pa.hidden.size ? h("button", { class: "small", onclick: () => pa.showAllClasses() }, "すべて表示") : null),
+      rows.length === 0
+        ? h("p", { class: "small muted" }, "読み込んだ点に分類がまだありません。")
+        : h("ul", { class: "class-list", "aria-label": "分類ごとの表示" }, rows.map((c) =>
+            h("li", null, h("label", { class: "row small" },
+              h("input", { type: "checkbox", checked: !c.hidden, "data-class": String(c.code), onchange: (e: Event) => pa.setClassHidden(c.code, !(e.target as HTMLInputElement).checked) }),
+              h("span", { class: "swatch", style: `background:${c.color}`, "aria-hidden": "true" }),
+              h("span", { class: "grow" }, `${c.code} ${c.name}`),
+              c.count !== null ? h("span", { class: "count muted" }, formatCount(c.count)) : null)))),
+      rows.length && app.current?.pointcloud?.classCounts ? null : h("p", { class: "small muted" }, "一覧は読み込んだ点に現れた分類です。"),
+    );
+  }
+  return out;
+}
+
 /** 点群の行の中身（色・大きさ・表示点数） */
-function pointCloudBody(app: App): Node[] {
+function pointCloudBody(app: App): (Node | null)[] {
   const pc = app.pc!;
   const u = pc.material.uniforms;
+  const pa = app.pointAttrs;
+  const modes: [ColorMode, string][] = [[ColorMode.RGB, "RGB"], [ColorMode.Intensity, "強度"], [ColorMode.Height, "高さ"], [ColorMode.Solid, "単色"]];
+  if (pa.hasClasses) modes.push([ColorMode.Classification, "分類"]);
+  if (pa.scalarCandidates.length) modes.push([ColorMode.Scalar, "値（属性）"]);
   return [
-    h("div", { class: "row" }, h("label", null, "色"), h("select", { class: "grow", onchange: (e: Event) => app.setColorMode(Number((e.target as HTMLSelectElement).value)) },
-      [[ColorMode.RGB, "RGB"], [ColorMode.Intensity, "強度"], [ColorMode.Height, "高さ"], [ColorMode.Solid, "単色"]].map(([v, l]) =>
-        h("option", { value: String(v), selected: u.uColorMode.value === v }, l as string)))),
+    h("div", { class: "row" }, h("label", null, "色"), h("select", { class: "grow", "aria-label": "点群の色", onchange: (e: Event) => app.setColorMode(Number((e.target as HTMLSelectElement).value)) },
+      modes.map(([v, l]) => h("option", { value: String(v), selected: u.uColorMode.value === v }, l)))),
+    ...attributeBody(app),
     h("div", { class: "row" }, h("label", null, "点の大きさ"), h("input", { type: "range", min: "0.2", max: "4", step: "0.1", value: String(u.uSize.value), class: "grow", "aria-label": "点の大きさ",
       oninput: (e: Event) => { pc.setPointSize(Number((e.target as HTMLInputElement).value)); app.viewer.requestRender(); } })),
     h("label", { class: "row" }, h("input", { type: "checkbox", checked: u.uSizeMode.value === SizeMode.Adaptive, onchange: (e: Event) => {
@@ -153,53 +179,66 @@ function modelBody(app: App, lm: LoadedModel): (Node | null)[] {
   ];
 }
 
-/** 「レイヤー」タブ: 何を見ているか。点群・モデル（階 → IFC クラス）ごとの表示・見せ方 */
+/** レイヤーの行の元「点群」（modes/builtinPanels.ts で登録） */
+export function pointCloudRows(app: App): LayerRow[] {
+  const pc = app.pc;
+  if (!pc) return [];
+  return [{
+    key: "pc",
+    level: 0,
+    label: "点群",
+    count: formatCount(pc.pointCount),
+    shown: pc.group.visible,
+    ghost: null,
+    onShow: (on) => { pc.group.visible = on; app.viewer.requestRender(); renderLayers(app); },
+    onMove: () => app.focusBox(pc.boxDisplay),
+    moveTitle: "点群の全体が見える所へ移動（見る向きはそのまま）",
+    body: () => pointCloudBody(app),
+  }];
+}
+
+/** レイヤーの行の元「モデル」（modes/builtinPanels.ts で登録） */
+export function modelRows(app: App): LayerRow[] {
+  return [...app.models.models.values()].filter((m) => m.role === "current").map((lm) => ({
+    key: lm.key,
+    level: 0,
+    label: lm.key,
+    count: storeyCount(lm) ? `${storeyCount(lm)} 階` : undefined,
+    shown: lm.visible,
+    ghost: lm.opacity < 0.999,
+    onShow: async (on: boolean) => { await app.models.setModelVisible(lm, on); renderLayers(app); },
+    onGhost: async (on: boolean) => { await app.models.setModelOpacity(lm, on ? 0.3 : 1); renderLayers(app); },
+    onMove: () => app.focusBox(app.models.boxOf(lm)),
+    moveTitle: "このモデルの全体が見える所へ移動（見る向きはそのまま）",
+    body: () => modelBody(app, lm),
+  }));
+}
+
+/** 「レイヤー」タブ: 何を見ているか。登録された行の元（点群・モデル・処理の結果）を順に並べる */
 export function renderLayers(app: App) {
   const el = $("#tab-layers");
-  const pc = app.pc;
-  const models = [...app.models.models.values()].filter((m) => m.role === "current");
   if (!app.current) {
     mount(el, h("p", { class: "muted" }, "プロジェクトを開くと、点群とモデルがここに並びます。"));
     return;
   }
   // 作り直してもキーボードのフォーカスを同じボタンに戻す
   const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#tab-layers [data-focus]")?.dataset.focus;
+  const groups = layerSources().map((src) => {
+    const rows = src.rows(app);
+    const empty = rows.length === 0 ? src.empty?.(app) ?? null : null;
+    if (rows.length === 0 && !empty) return null;
+    return h("div", { class: "layer-group", "data-layer-source": src.id, role: "group", "aria-label": src.heading },
+      src.heading ? h("div", { class: "layer-group-head small muted" }, src.heading) : null,
+      rows.map((r) => layerRow(app, r)),
+      empty ? h("p", { class: "small muted" }, empty) : null);
+  });
   mount(
     el,
     h(
       "div",
       { class: "layer-tree", role: "tree", "aria-label": "レイヤー" },
       h("div", { class: "layer-head small muted" }, h("span", { class: "grow" }, "名前"), h("span", { class: "ico-btn placeholder" }, "表示"), h("span", { class: "ico-btn placeholder" }, "半透明"), h("span", { class: "ico-btn placeholder" }, "移動")),
-      pc
-        ? layerRow(app, {
-            key: "pc",
-            level: 0,
-            label: "点群",
-            count: formatCount(pc.pointCount),
-            shown: pc.group.visible,
-            ghost: null,
-            onShow: (on) => { pc.group.visible = on; app.viewer.requestRender(); renderLayers(app); },
-            onMove: () => app.focusBox(pc.boxDisplay),
-            moveTitle: "点群の全体が見える所へ移動（見る向きはそのまま）",
-            body: () => pointCloudBody(app),
-          })
-        : h("p", { class: "small muted" }, "点群はありません。"),
-      models.length === 0 ? h("p", { class: "small muted" }, "モデルはありません。") : null,
-      models.map((lm) =>
-        layerRow(app, {
-          key: lm.key,
-          level: 0,
-          label: lm.key,
-          count: storeyCount(lm) ? `${storeyCount(lm)} 階` : undefined,
-          shown: lm.visible,
-          ghost: lm.opacity < 0.999,
-          onShow: async (on) => { await app.models.setModelVisible(lm, on); renderLayers(app); },
-          onGhost: async (on) => { await app.models.setModelOpacity(lm, on ? 0.3 : 1); renderLayers(app); },
-          onMove: () => app.focusBox(app.models.boxOf(lm)),
-          moveTitle: "このモデルの全体が見える所へ移動（見る向きはそのまま）",
-          body: () => modelBody(app, lm),
-        }),
-      ),
+      groups,
     ),
     // 差分の色分けは「差分」タブ（成果）にまとめる。色分け中だけ、ここにも状態を出す
     app.diff.shown ? h("p", { class: "small muted" }, "前の版との差分を色分けしています（切替は「差分」タブ）。") : null,

@@ -1,5 +1,8 @@
 // exe（WebView2 ホスト）との通信。RPC は postMessage、データの読み書きは https://kasane.local/ への fetch。
 
+import type { JobKindInfo, JobProgress } from "./data/jobs";
+export type { JobKindInfo, JobProgress } from "./data/jobs";
+
 export interface LocalFile {
   token: string;
   name: string;
@@ -74,32 +77,17 @@ export interface StorageState {
 
 export type OpenableFolder = FolderKind | "local" | "logs" | "work";
 
-export interface JobKindInfo {
-  id: string;
-  label: string;
-}
-
+/** 待っている・動いている処理（jobList）。待ち行列の順 */
 export interface ActiveJob {
   jobId: string;
   kind: string;
   folder: string;
   startedAt: string;
+  status: "queued" | "running";
+  /** 待ち行列の位置（1 = 次）。動いていれば 0 */
+  position: number;
   last: JobProgress | null;
 }
-
-/**
- * 処理（ジョブ）の通知 job.progress の data（app/Kasane.Host/JobService.cs）。
- * stage / progress / log / error は変換エンジンの JSON 行そのまま。done は manifest の derived に追記した 1 件。
- */
-export type JobProgress = { jobId: string; kind: string; folder: string } & (
-  | { event: "stage"; stage: string; label: string; weight: number }
-  | { event: "progress"; stage: string; done: number; total: number; message?: string }
-  | { event: "log"; level: string; message: string }
-  | { event: "error"; message: string }
-  | { event: "done"; entry: import("./data/dataset").DerivedEntry }
-  | { event: "failed"; message: string }
-  | { event: "aborted" }
-);
 
 /** 処理の通知を受ける。戻り値で購読をやめる */
 export function onJobProgress(cb: (p: JobProgress) => void): () => void {

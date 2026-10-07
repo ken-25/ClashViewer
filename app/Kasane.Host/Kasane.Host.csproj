@@ -34,4 +34,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>
+  <!-- 単体テスト（app/Kasane.Host.Tests）から internal のコンストラクタ（変換エンジンの差し替え）を使う -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Kasane.Host.Tests" />
+  </ItemGroup>
 </Project>
